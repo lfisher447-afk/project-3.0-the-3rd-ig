@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "framework": "vite",
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "*" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
+      ]
+    },
+    {
+      "source": "/sw-proxy.js",
+      "headers": [
+        { "key": "Service-Worker-Allowed", "value": "/" },
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    }
+  ],
+  "rewrites": [
+    { "source": "/api/proxy", "destination": "/api/proxy" },
+    { "source": "/api/proxy/ping", "destination": "/api/proxy-ping" },
+    { "source": "/api/health", "destination": "/api/health" },
+    { "source": "/api/nodes/status", "destination": "/api/nodes-status" },
+    { "source": "/api/audio/stream", "destination": "/api/audio-stream" },
+    { "source": "/api/video/stream", "destination": "/api/video-stream" },
+    { "source": "/api/youtube/search", "destination": "/api/innertube-search" },
+    { "source": "/api/innertube/search", "destination": "/api/innertube-search" },
+    { "source": "/api/innertube/video-info", "destination": "/api/innertube-video-info" },
+    { "source": "/api/spotify/featured", "destination": "/api/spotify-featured" },
+    { "source": "/api/spotify/search", "destination": "/api/spotify-search" },
+    { "source": "/api/spotify/resolve-playlist", "destination": "/api/spotify-resolve" },
+    { "source": "/api/auth/spotify/url", "destination": "/api/auth-spotify-url" },
+    { "source": "/api/auth/spotify/token", "destination": "/api/auth-spotify-token" },
+    { "source": "/api/invidious/trending", "destination": "/api/invidious-trending" },
+    { "source": "/api/invidious/comments", "destination": "/api/invidious-comments" },
+    { "source": "/api/invidious/instances", "destination": "/api/invidious-instances" },
+    { "source": "/api/ai/oracle", "destination": "/api/ai-oracle" },
+    { "source": "/api/ws-tunnel", "destination": "/api/ws-tunnel" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}
