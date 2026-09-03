@@ -22,35 +22,14 @@
     }
   ],
   "functions": {
-    "api/**/*.ts": {
-      "memory": 1024,
+    "api/index.ts": {
       "maxDuration": 60
     }
   },
   "rewrites": [
-    { "source": "/auth/callback", "destination": "/api/auth-callback" },
-    { "source": "/auth/callback/", "destination": "/api/auth-callback" },
-    { "source": "/api/backup1/proxy", "destination": "/api/proxy" },
-    { "source": "/api/mrbean/proxy", "destination": "/api/proxy" },
-    { "source": "/api/proxy", "destination": "/api/proxy" },
-    { "source": "/api/proxy/ping", "destination": "/api/proxy-ping" },
-    { "source": "/api/health", "destination": "/api/health" },
-    { "source": "/api/nodes/status", "destination": "/api/nodes-status" },
-    { "source": "/api/audio/stream", "destination": "/api/audio-stream" },
-    { "source": "/api/video/stream", "destination": "/api/video-stream" },
-    { "source": "/api/youtube/search", "destination": "/api/innertube-search" },
-    { "source": "/api/innertube/search", "destination": "/api/innertube-search" },
-    { "source": "/api/innertube/video-info", "destination": "/api/innertube-video-info" },
-    { "source": "/api/spotify/featured", "destination": "/api/spotify-featured" },
-    { "source": "/api/spotify/search", "destination": "/api/spotify-search" },
-    { "source": "/api/spotify/resolve-playlist", "destination": "/api/spotify-resolve" },
-    { "source": "/api/auth/spotify/url", "destination": "/api/auth-spotify-url" },
-    { "source": "/api/auth/spotify/token", "destination": "/api/auth-spotify-token" },
-    { "source": "/api/invidious/trending", "destination": "/api/invidious-trending" },
-    { "source": "/api/invidious/comments", "destination": "/api/invidious-comments" },
-    { "source": "/api/invidious/instances", "destination": "/api/invidious-instances" },
-    { "source": "/api/ai/oracle", "destination": "/api/ai-oracle" },
-    { "source": "/api/ws-tunnel", "destination": "/api/ws-tunnel" },
+    { "source": "/auth/callback", "destination": "/api/index?__route=/auth/callback" },
+    { "source": "/auth/callback/", "destination": "/api/index?__route=/auth/callback" },
+    { "source": "/api/(.*)", "destination": "/api/index?__route=/api/$1" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

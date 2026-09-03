@@ -523,9 +523,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             {/* Serverless Functions Directory */}
             <div className="space-y-2 mb-6">
-              <h4 className="text-xs uppercase tracking-wider text-[#8aaeb5] font-mono font-bold mb-2">
-                Active Serverless Routes (Vercel & Local Parity)
-              </h4>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-[#8aaeb5] font-mono font-bold">
+                  Active Serverless Routes (Unified Gateway: 1 / 12 Hobby Functions Used)
+                </h4>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/40 text-emerald-400 font-bold">
+                  Hobby Plan Optimized (100% Feature Parity)
+                </span>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-mono">
                 {[
                   { path: '/api/audio/stream', desc: 'Audio Decipher & Multi-Source Fallback' },
@@ -537,7 +542,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   { path: '/api/spotify/resolve-playlist', desc: 'Playlist-to-YouTube Bridge' },
                   { path: '/api/auth/spotify/url', desc: 'OAuth Authorization URL Generator' },
                   { path: '/api/auth/spotify/token', desc: 'Token Exchange & Refresh' },
-                  { path: '/api/auth/callback', desc: 'OAuth Popup PostMessage Handler' },
+                  { path: '/auth/callback', desc: 'OAuth Popup PostMessage Handler' },
                   { path: '/api/invidious/trending', desc: 'Invidious Regional Top Streams' },
                   { path: '/api/invidious/comments', desc: 'Decentralized Comments Fetcher' },
                   { path: '/api/invidious/instances', desc: 'Health Monitor for Fediverse Nodes' },
@@ -552,7 +557,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <span className="text-[#48e4ff] font-bold block">{fn.path}</span>
                       <span className="text-[10px] text-[#789d9a]">{fn.desc}</span>
                     </div>
-                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-[#12363f] text-[#48e4ff] font-bold">200 OK</span>
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-[#12363f] text-[#48e4ff] font-bold">Routed</span>
                   </div>
                 ))}
               </div>
@@ -562,13 +567,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="p-4 rounded-xl bg-[#081519] border border-[#1a3840]">
               <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
                 <Zap size={14} className="text-[#48e4ff]" />
-                Vercel 1-Click Ready
+                Vercel Hobby Plan Ready (No Files or Features Removed)
               </h4>
               <ul className="text-xs text-[#8aaeb5] space-y-1.5 list-disc pl-4">
-                <li><code className="text-[#48e4ff]">vercel.json</code> configured with SPA fallbacks, functions allocation (1024MB/60s), and clean rewrites.</li>
-                <li><code className="text-[#48e4ff]">sw-proxy.js</code> Service Worker granted root scope headers (<code className="text-slate-300">Service-Worker-Allowed: /</code>).</li>
-                <li>Dual runtime compatibility: works out of the box in Vercel Serverless and Node/Express container.</li>
-                <li>Add <code className="text-[#48e4ff]">GEMINI_API_KEY</code>, <code className="text-[#48e4ff]">SPOTIFY_CLIENT_ID</code>, and <code className="text-[#48e4ff]">SPOTIFY_CLIENT_SECRET</code> in Vercel Environment Variables.</li>
+                <li><strong className="text-white">Unified Catch-All Gateway:</strong> Routes all endpoints through <code className="text-[#48e4ff]">api/index.ts</code> while keeping code modular in <code className="text-[#48e4ff]">api/_handlers/</code>. This counts as <strong>only 1 function</strong> toward the 12-function Hobby plan limit.</li>
+                <li><strong className="text-white">Full Free Serverless Support:</strong> Full access to YouTube streaming, Spotify bridge, Invidious mesh, AI Oracle, and Proxies without requiring a paid Vercel plan.</li>
+                <li><strong className="text-white">Hobby Memory & Duration:</strong> Default 2GB memory allocated by Vercel; maxDuration set up to 60s without configuration conflicts.</li>
+                <li><strong className="text-white">Service Worker:</strong> <code className="text-[#48e4ff]">sw-proxy.js</code> has root scope headers (<code className="text-slate-300">Service-Worker-Allowed: /</code>).</li>
+                <li><strong className="text-white">Environment Variables:</strong> Optional <code className="text-[#48e4ff]">GEMINI_API_KEY</code>, <code className="text-[#48e4ff]">SPOTIFY_CLIENT_ID</code>, and <code className="text-[#48e4ff]">SPOTIFY_CLIENT_SECRET</code> in your Vercel Project Settings.</li>
               </ul>
             </div>
           </div>
