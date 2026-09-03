@@ -3,6 +3,11 @@
   "framework": null,
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
+  "functions": {
+    "server.ts": {
+      "exclude": true
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",
