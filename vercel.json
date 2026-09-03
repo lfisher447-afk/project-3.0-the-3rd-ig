@@ -3,12 +3,11 @@
   "framework": null,
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
-  "builds": [
-    {
-      "src": "server.ts",
-      "use": "@vercel/node"
+  "functions": {
+    "server.ts": {
+      "runtime": "@vercel/node"
     }
-  ],
+  },
   "headers": [
     {
       "source": "/(.*)",
@@ -45,7 +44,7 @@
     { "source": "/api/invidious/trending", "destination": "/server.ts" },
     { "source": "/api/invidious/comments", "destination": "/server.ts" },
     { "source": "/api/invidious/instances", "destination": "/server.ts" },
-    { "source": "/api/ai/oracle", "destination": "/api/ai-oracle" },
+    { "source": "/api/ai/oracle", "destination": "/server.ts" },
     { "source": "/api/ws-tunnel", "destination": "/server.ts" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
