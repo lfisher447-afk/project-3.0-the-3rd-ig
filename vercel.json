@@ -1,8 +1,14 @@
 {
   "version": 2,
-  "framework": "vite",
-  "buildCommand": "vite build",
+  "framework": null,
+  "buildCommand": "bun run build",
   "outputDirectory": "dist",
+  "builds": [
+    {
+      "src": "server.ts",
+      "use": "@vercel/node"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -22,25 +28,25 @@
     }
   ],
   "rewrites": [
-    { "source": "/api/proxy", "destination": "/api/proxy" },
-    { "source": "/api/proxy/ping", "destination": "/api/proxy-ping" },
-    { "source": "/api/health", "destination": "/api/health" },
-    { "source": "/api/nodes/status", "destination": "/api/nodes-status" },
-    { "source": "/api/audio/stream", "destination": "/api/audio-stream" },
-    { "source": "/api/video/stream", "destination": "/api/video-stream" },
-    { "source": "/api/youtube/search", "destination": "/api/innertube-search" },
-    { "source": "/api/innertube/search", "destination": "/api/innertube-search" },
-    { "source": "/api/innertube/video-info", "destination": "/api/innertube-video-info" },
-    { "source": "/api/spotify/featured", "destination": "/api/spotify-featured" },
-    { "source": "/api/spotify/search", "destination": "/api/spotify-search" },
-    { "source": "/api/spotify/resolve-playlist", "destination": "/api/spotify-resolve" },
-    { "source": "/api/auth/spotify/url", "destination": "/api/auth-spotify-url" },
-    { "source": "/api/auth/spotify/token", "destination": "/api/auth-spotify-token" },
-    { "source": "/api/invidious/trending", "destination": "/api/invidious-trending" },
-    { "source": "/api/invidious/comments", "destination": "/api/invidious-comments" },
-    { "source": "/api/invidious/instances", "destination": "/api/invidious-instances" },
+    { "source": "/api/proxy", "destination": "/server.ts" },
+    { "source": "/api/proxy/ping", "destination": "/server.ts" },
+    { "source": "/api/health", "destination": "/server.ts" },
+    { "source": "/api/nodes/status", "destination": "/server.ts" },
+    { "source": "/api/audio/stream", "destination": "/server.ts" },
+    { "source": "/api/video/stream", "destination": "/server.ts" },
+    { "source": "/api/youtube/search", "destination": "/server.ts" },
+    { "source": "/api/innertube/search", "destination": "/server.ts" },
+    { "source": "/api/innertube/video-info", "destination": "/server.ts" },
+    { "source": "/api/spotify/featured", "destination": "/server.ts" },
+    { "source": "/api/spotify/search", "destination": "/server.ts" },
+    { "source": "/api/spotify/resolve-playlist", "destination": "/server.ts" },
+    { "source": "/api/auth/spotify/url", "destination": "/server.ts" },
+    { "source": "/api/auth/spotify/token", "destination": "/server.ts" },
+    { "source": "/api/invidious/trending", "destination": "/server.ts" },
+    { "source": "/api/invidious/comments", "destination": "/server.ts" },
+    { "source": "/api/invidious/instances", "destination": "/server.ts" },
     { "source": "/api/ai/oracle", "destination": "/api/ai-oracle" },
-    { "source": "/api/ws-tunnel", "destination": "/api/ws-tunnel" },
+    { "source": "/api/ws-tunnel", "destination": "/server.ts" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
