@@ -3,11 +3,6 @@
   "framework": null,
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
-  "functions": {
-    "server.ts": {
-      "runtime": "@vercel/node"
-    }
-  },
   "headers": [
     {
       "source": "/(.*)",
