@@ -162,7 +162,7 @@ export const ShazamModal: React.FC<ShazamModalProps> = ({
       const res = await fetch(`/api/innertube/search?q=${encodeURIComponent(searchQuery)}`);
       if (res.ok) {
         const data = await res.json();
-        setSearchResults(data.results || []);
+        setSearchResults(Array.isArray(data) ? data : (data.results || []));
       }
     } catch (e) {
       console.error('Song match error:', e);

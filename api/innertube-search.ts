@@ -48,7 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             source: "youtube",
             streamUrl: `/api/audio/stream?id=${v.videoId}`,
           }));
-          return res.json(results); // Return flat array or results object based on caller
+          return res.json({ results });
         }
       }
     } catch {}
@@ -85,7 +85,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       for (const s of sections) {
         const items = s.itemSectionRenderer?.contents || [];
         for (const item of items) {
-          if (item.videoRenderer) {
+          if (item.videoRenderer && item.videoRenderer.videoId) {
             const v = item.videoRenderer;
             results.push({
               id: v.videoId,
@@ -108,10 +108,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (results.length > 0) {
-        return res.json(results.slice(0, 24));
+        return res.json({ results: results.slice(0, 24) });
       }
     }
   } catch {}
 
-  return res.json([]);
+  return res.json({ results: [] });
 }

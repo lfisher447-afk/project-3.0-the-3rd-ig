@@ -86,7 +86,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
         const res = await fetch(`/api/innertube/search?q=${encodeURIComponent(urlInput.trim())}`);
         if (!res.ok) throw new Error('Failed to query YouTube');
         const data = await res.json();
-        const tracks: Track[] = (data.results || []).map((v: any) => ({
+        const rawResults = Array.isArray(data) ? data : (data.results || []);
+        const tracks: Track[] = rawResults.map((v: any) => ({
           id: v.id,
           title: v.title,
           artist: v.artist,

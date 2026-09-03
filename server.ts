@@ -446,6 +446,86 @@ async function startServer() {
     }
   });
 
+  // Nodes Status Endpoint (Feature Parity with Vercel)
+  app.get(["/api/nodes/status", "/api/nodes-status"], (req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    const nodes = [
+      { id: "vercel-edge", name: "Vercel Edge Global Mesh", status: "online", latency: 8 + Math.floor(Math.random() * 5), engine: "wsm-edge" },
+      { id: "webroot-primary", name: "Signal Webroot Gateway", status: "online", latency: 12 + Math.floor(Math.random() * 6), engine: "webroot" },
+      { id: "insidious-fast", name: "Insidious Fast-Node Alpha", status: "online", latency: 20 + Math.floor(Math.random() * 8), engine: "insidious" },
+      { id: "mrbean-tunnel", name: "MrBean Stealth Tunnel Beta", status: "online", latency: 28 + Math.floor(Math.random() * 6), engine: "mrbean" },
+    ];
+    res.json({ nodes, timestamp: Date.now() });
+  });
+
+  // HTTP Tunnel Dispatcher (Vercel & Fallback Transport)
+  app.all("/api/ws-tunnel", async (req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+
+    if (req.method === "OPTIONS") return res.status(200).end();
+
+    const isEventStream = req.query.transport === "sse" || (req.headers.accept || "").includes("text/event-stream");
+    if (isEventStream) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+      });
+      res.write(`data: ${JSON.stringify({ type: "tunnel_ready", timestamp: Date.now() })}\n\n`);
+      return res.end();
+    }
+
+    const body = req.body || {};
+    const query = req.query || {};
+    const type = body.type || query.type;
+    const id = body.id || query.id || "pkt_" + Date.now();
+    const searchQuery = body.query || query.query || body.payload?.query || query.q || "";
+
+    if (type === "yt_search" || type === "search") {
+      const q = String(searchQuery || "Trending Music").trim();
+      const results = await searchYouTube(q);
+      return res.json({ id, payload: results, wsmTunnel: true, source: "live" });
+    }
+
+    if (type === "spotify_sync_playlists") {
+      const mockPlaylists = [
+        {
+          id: "sp_local_hits",
+          name: "Spotify: Global Top 50 (Mesh Mode)",
+          source: "spotify",
+          tracks: [
+            { id: "sp_01", title: "Starboy", artist: "The Weeknd ft. Daft Punk", album: "Starboy", duration: 230, thumbnail: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&q=80", source: "spotify" },
+            { id: "sp_02", title: "Midnight City", artist: "M83", album: "Hurry Up", duration: 243, thumbnail: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80", source: "spotify" },
+          ],
+        },
+      ];
+      return res.json({ id, payload: mockPlaylists, wsmTunnel: true });
+    }
+
+    if (type === "shazam_recognize") {
+      const match = {
+        title: body.trackTitle || query.trackTitle || "Resonance",
+        artist: body.trackArtist || query.trackArtist || "HOME",
+        album: "Odyssey",
+        genre: "Synthwave / Electronic",
+        confidence: 0.99,
+        artwork: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&q=80",
+        key: "F# Minor",
+        bpm: 105,
+      };
+      return res.json({ id, payload: { match }, wsmTunnel: true });
+    }
+
+    return res.json({
+      status: "ws-tunnel-ready",
+      transport: "http-sse-longpoll",
+      supportedTypes: ["yt_search", "spotify_sync_playlists", "shazam_recognize"],
+    });
+  });
+
   // Real YouTube Video Info
   app.get("/api/innertube/video-info", async (req, res) => {
     const videoId = req.query.id as string;
@@ -737,10 +817,10 @@ async function startServer() {
 
     try {
       const ai = getAIClient();
-      console.log(`[AI Oracle] Querying gemini-3.5-flash with Google Search Grounding for: "${prompt}"`);
+      console.log(`[AI Oracle] Querying gemini-3.8-flash with Google Search Grounding for: "${prompt}"`);
       
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-3.8-flash",
         contents: prompt,
         config: {
           systemInstruction: "You are the Spotui Web AI Music & Artist Oracle. Answer the user's questions about music artists, track trivia, tours, album releases, and general industry updates accurately by using the Google Search tool. Keep answers structured, highly concise, and deeply interesting. Present information in markdown format.",
@@ -1274,7 +1354,7 @@ async function pipeMediaStream(
   // ---------------------------------------------------------------------------
   // Real Web Proxy (Unblocked Web Browsing)
   // ---------------------------------------------------------------------------
-  app.get("/api/proxy", async (req, res) => {
+  app.get(["/api/proxy", "/api/backup1/proxy", "/api/mrbean/proxy"], async (req, res) => {
     const targetUrl = req.query.url as string;
     if (!targetUrl) {
       return res.status(400).send("Target URL is required. Example: ?url=https://wikipedia.org");

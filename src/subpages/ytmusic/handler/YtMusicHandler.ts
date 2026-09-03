@@ -32,7 +32,7 @@ export class YtMusicHandler {
       if (!res.ok) throw new Error(`Search failed: HTTP ${res.status}`);
 
       const data = await res.json();
-      const items: any[] = data.results || [];
+      const items: any[] = Array.isArray(data) ? data : (data.results || []);
       return items.map((item) => {
         const title = cleanTrackTitle(item.title);
         const artist = cleanArtistName(item.author || item.channelTitle || 'Unknown Artist');

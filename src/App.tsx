@@ -47,6 +47,7 @@ import {
   getAllTracks,
   getAllPlaylists,
   saveTrack,
+  saveTracksBatch,
   savePlaylist,
   deleteTrack,
   deletePlaylist,
@@ -54,6 +55,57 @@ import {
   saveStoredSettings,
   getDB,
 } from './lib/db';
+
+const STARTER_TRACKS: Track[] = [
+  {
+    id: 'yt_kJQP7kiw5Fk',
+    title: 'Despacito',
+    artist: 'Luis Fonsi ft. Daddy Yankee',
+    album: 'VIDA',
+    duration: 228,
+    durationText: '3:48',
+    artwork: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&q=80',
+    source: 'youtube',
+    addedAt: Date.now(),
+    streamUrl: '/api/audio/stream?id=kJQP7kiw5Fk',
+  },
+  {
+    id: 'yt_OPf0YbXqDm0',
+    title: 'Uptown Funk',
+    artist: 'Mark Ronson ft. Bruno Mars',
+    album: 'Uptown Special',
+    duration: 270,
+    durationText: '4:30',
+    artwork: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&q=80',
+    source: 'youtube',
+    addedAt: Date.now() - 1000,
+    streamUrl: '/api/audio/stream?id=OPf0YbXqDm0',
+  },
+  {
+    id: 'yt_fJ9rUzIMcZQ',
+    title: 'Bohemian Rhapsody',
+    artist: 'Queen',
+    album: 'A Night at the Opera',
+    duration: 354,
+    durationText: '5:54',
+    artwork: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=600&q=80',
+    source: 'youtube',
+    addedAt: Date.now() - 2000,
+    streamUrl: '/api/audio/stream?id=fJ9rUzIMcZQ',
+  },
+  {
+    id: 'yt_JGwWNGJdvx8',
+    title: 'Shape of You',
+    artist: 'Ed Sheeran',
+    album: 'Divide',
+    duration: 233,
+    durationText: '3:53',
+    artwork: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&q=80',
+    source: 'youtube',
+    addedAt: Date.now() - 3000,
+    streamUrl: '/api/audio/stream?id=JGwWNGJdvx8',
+  },
+];
 
 const defaultSettings: AppSettings = {
   eq: {
@@ -172,6 +224,21 @@ export default function App() {
   useEffect(() => {
     initWSProxy();
 
+    // Check for popup Spotify OAuth callback redirect
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const authCode = urlParams.get('code');
+      const authError = urlParams.get('error');
+      if ((authCode || authError) && window.opener) {
+        window.opener.postMessage({
+          type: 'SPOTIFY_AUTH_SUCCESS',
+          code: authCode || '',
+          error: authError || '',
+        }, '*');
+        setTimeout(() => window.close(), 600);
+      }
+    } catch {}
+
     // Load initial settings and library from IndexedDB
     const initApp = async () => {
       try {
@@ -179,8 +246,14 @@ export default function App() {
         if (stored) {
           setSettings((prev) => ({ ...prev, ...stored }));
         }
-        const loadedTracks = await getAllTracks();
+        let loadedTracks = await getAllTracks();
         const loadedPlaylists = await getAllPlaylists();
+
+        if (loadedTracks.length === 0) {
+          await saveTracksBatch(STARTER_TRACKS);
+          loadedTracks = STARTER_TRACKS;
+        }
+
         setTracks(loadedTracks);
         setPlaylists(loadedPlaylists);
 

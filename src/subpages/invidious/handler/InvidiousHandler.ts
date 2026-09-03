@@ -62,7 +62,7 @@ class InvidiousHandler {
     const res = await fetch(`/api/innertube/search?q=${encodeURIComponent(query.trim())}`);
     if (!res.ok) throw new Error('Search request failed');
     const data = await res.json();
-    return data.results || [];
+    return Array.isArray(data) ? data : (data.results || []);
   }
 
   // Fetch trending video list
