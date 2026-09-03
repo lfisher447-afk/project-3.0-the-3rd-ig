@@ -3,6 +3,8 @@
   "framework": null,
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
+  "cleanUrls": true,
+  "trailingSlash": false,
   "headers": [
     {
       "source": "/(.*)",
@@ -21,26 +23,26 @@
       ]
     }
   ],
-  "rewrites": [
-    { "source": "/api/proxy", "destination": "/server.ts" },
-    { "source": "/api/proxy/ping", "destination": "/server.ts" },
-    { "source": "/api/health", "destination": "/server.ts" },
-    { "source": "/api/nodes/status", "destination": "/server.ts" },
-    { "source": "/api/audio/stream", "destination": "/server.ts" },
-    { "source": "/api/video/stream", "destination": "/server.ts" },
-    { "source": "/api/youtube/search", "destination": "/server.ts" },
-    { "source": "/api/innertube/search", "destination": "/server.ts" },
-    { "source": "/api/innertube/video-info", "destination": "/server.ts" },
-    { "source": "/api/spotify/featured", "destination": "/server.ts" },
-    { "source": "/api/spotify/search", "destination": "/server.ts" },
-    { "source": "/api/spotify/resolve-playlist", "destination": "/server.ts" },
-    { "source": "/api/auth/spotify/url", "destination": "/server.ts" },
-    { "source": "/api/auth/spotify/token", "destination": "/server.ts" },
-    { "source": "/api/invidious/trending", "destination": "/server.ts" },
-    { "source": "/api/invidious/comments", "destination": "/server.ts" },
-    { "source": "/api/invidious/instances", "destination": "/server.ts" },
-    { "source": "/api/ai/oracle", "destination": "/server.ts" },
-    { "source": "/api/ws-tunnel", "destination": "/server.ts" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  "routes": [
+    { "src": "/api/proxy", "dest": "/server.ts" },
+    { "src": "/api/proxy/ping", "dest": "/server.ts" },
+    { "src": "/api/health", "dest": "/server.ts" },
+    { "src": "/api/nodes/status", "dest": "/server.ts" },
+    { "src": "/api/audio/stream", "dest": "/server.ts" },
+    { "src": "/api/video/stream", "dest": "/server.ts" },
+    { "src": "/api/youtube/search", "dest": "/server.ts" },
+    { "src": "/api/innertube/search", "dest": "/server.ts" },
+    { "src": "/api/innertube/video-info", "dest": "/server.ts" },
+    { "src": "/api/spotify/featured", "dest": "/server.ts" },
+    { "src": "/api/spotify/search", "dest": "/server.ts" },
+    { "src": "/api/spotify/resolve-playlist", "dest": "/server.ts" },
+    { "src": "/api/auth/spotify/url", "dest": "/server.ts" },
+    { "src": "/api/auth/spotify/token", "dest": "/server.ts" },
+    { "src": "/api/invidious/trending", "dest": "/server.ts" },
+    { "src": "/api/invidious/comments", "dest": "/server.ts" },
+    { "src": "/api/invidious/instances", "dest": "/server.ts" },
+    { "src": "/api/ai/oracle", "dest": "/server.ts" },
+    { "src": "/api/ws-tunnel", "dest": "/server.ts" },
+    { "src": "/((?!api/).*)", "dest": "/index.html" }
   ]
 }
