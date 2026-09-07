@@ -43,6 +43,7 @@ import { Track, Playlist, AppSettings } from './types';
 import { audioEngine } from './lib/audioEngine';
 import { initWSProxy, sendWSRequest } from './lib/ws-proxy';
 import { initSecurityEngine, launchAboutBlankCloak } from './lib/security';
+import { applyThemePalette } from './lib/theme';
 import {
   getAllTracks,
   getAllPlaylists,
@@ -146,6 +147,28 @@ const defaultSettings: AppSettings = {
     clearSessionOnExit: false,
     sandboxBlobMode: false,
     cloakPreset: 'none',
+    antiTabCloseGuard: false,
+    linewizeBypassHeaders: true,
+    extensionPurgeObserver: true,
+    webrtcDecoyStream: true,
+    canvasScrambler: true,
+    mediaRecorderBlocker: true,
+    osHotkeyBlocker: false,
+    printBlocker: true,
+    trafficNoiseGenerator: true,
+    antiDetectHeartbeat: true,
+    clipboardSanitizer: false,
+    iframeFramebusterNeutralizer: true,
+    webSocketTunnelFallback: true,
+    fakeNetworkLatencyMask: false,
+    autoAboutBlankLauncher: false,
+    pushNotificationsEnabled: true,
+    teacherDetectionAlert: true,
+    antiOcrStroboscopicShield: false,
+    antiScreenShareCurtain: true,
+    devToolsTrapCurtain: true,
+    ephemeralMemoryWipe: false,
+    audioFrequencyCloak: false,
   },
   theme: {
     palette: 'cyan',
@@ -244,7 +267,12 @@ export default function App() {
       try {
         const stored = await getStoredSettings();
         if (stored) {
-          setSettings((prev) => ({ ...prev, ...stored }));
+          setSettings((prev) => ({
+            ...prev,
+            ...stored,
+            security: { ...prev.security, ...(stored.security || {}) },
+            theme: { ...prev.theme, ...(stored.theme || {}) },
+          }));
         }
         let loadedTracks = await getAllTracks();
         const loadedPlaylists = await getAllPlaylists();
@@ -277,8 +305,9 @@ export default function App() {
     });
   }, []);
 
-  // 2. Apply Security Engine on settings change
+  // 2. Apply Security Engine & Theme on settings change
   useEffect(() => {
+    applyThemePalette(settings.theme.palette);
     initSecurityEngine(settings);
     audioEngine.applySettings(settings);
     saveStoredSettings(settings);

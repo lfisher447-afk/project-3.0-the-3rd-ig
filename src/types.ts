@@ -72,7 +72,7 @@ export interface AppSettings {
     shuffle: boolean;
   };
 
-  // Security, DRM & Cloaking (30+ Parameters)
+  // Security, DRM, Anti-Detect & Cloaking (50+ Dedicated Measures)
   security: {
     antiScreenshotEnabled: boolean;
     blurSensitivity: 'standard' | 'high' | 'ultra-paranoia';
@@ -82,11 +82,35 @@ export interface AppSettings {
     clearSessionOnExit: boolean;
     sandboxBlobMode: boolean;
     cloakPreset: 'none' | 'google-classroom' | 'google-drive' | 'wikipedia' | 'canvas' | 'calculator';
+    // Linewize, School Monitor & Deep Security Features
+    antiTabCloseGuard: boolean;
+    linewizeBypassHeaders: boolean;
+    extensionPurgeObserver: boolean;
+    webrtcDecoyStream: boolean;
+    canvasScrambler: boolean;
+    mediaRecorderBlocker: boolean;
+    osHotkeyBlocker: boolean;
+    printBlocker: boolean;
+    trafficNoiseGenerator: boolean;
+    antiDetectHeartbeat: boolean;
+    clipboardSanitizer: boolean;
+    iframeFramebusterNeutralizer: boolean;
+    webSocketTunnelFallback: boolean;
+    fakeNetworkLatencyMask: boolean;
+    autoAboutBlankLauncher: boolean;
+    pushNotificationsEnabled: boolean;
+    teacherDetectionAlert: boolean;
+    antiOcrStroboscopicShield: boolean;
+    antiScreenShareCurtain: boolean;
+    devToolsTrapCurtain: boolean;
+    ephemeralMemoryWipe: boolean;
+    audioFrequencyCloak: boolean;
   };
 
   // Theming & Visuals
   theme: {
     palette: ThemePalette;
+    customAccent?: string;
     visualizerStyle: VisualizerStyle;
     glowIntensity: number; // 0 to 100
     particlesEnabled: boolean;

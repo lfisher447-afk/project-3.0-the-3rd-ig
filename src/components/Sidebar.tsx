@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { ThemePalette } from '../types';
+import { PALETTES } from '../lib/theme';
 
 interface SidebarProps {
   activeTab: string;
@@ -39,7 +40,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenShazam,
   onOpenDsp,
   onLaunchCloak,
+  palette,
 }) => {
+  const currentTheme = PALETTES[palette] || PALETTES.cyan;
   const navItems = [
     { id: 'home', icon: Home, label: 'Signal Deck', desc: 'Overview & telemetry' },
     { id: 'yt-music', icon: Music, label: 'YouTube Music', badge: 'Opus 48k', desc: 'Hi-Fi streams' },
@@ -56,12 +59,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <aside className="w-72 border-r border-slate-800/80 bg-gradient-to-b from-[#07090e] via-[#0b0f17] to-[#080a10] p-4 flex flex-col z-20 shrink-0 select-none overflow-y-auto">
       {/* Brand Header */}
       <div className="flex items-center gap-3 mb-6 p-2 rounded-2xl bg-gradient-to-r from-slate-900/60 to-slate-800/30 border border-slate-800/60 shadow-lg">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 via-sky-500 to-indigo-600 flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.4)] relative overflow-hidden shrink-0">
+        <div className={`w-10 h-10 rounded-xl ${currentTheme.iconBg} flex items-center justify-center relative overflow-hidden shrink-0`}>
           <Disc className="text-slate-950 animate-spin" style={{ animationDuration: '6s' }} size={22} />
         </div>
         <div className="min-w-0">
           <div className="font-bold text-base tracking-tight text-white flex items-center gap-1.5">
-            SpotUI <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-mono border border-cyan-500/30">Studio v3.5</span>
+            SpotUI <span className="text-[10px] px-2 py-0.5 rounded-full font-mono border" style={{ backgroundColor: currentTheme.badgeBg, color: currentTheme.badgeText, borderColor: currentTheme.badgeBorder }}>Studio v3.5</span>
           </div>
           <div className="text-[10px] text-slate-400 tracking-wider uppercase font-mono truncate flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
@@ -74,7 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <nav className="space-y-1 mb-5">
         <div className="text-[10px] uppercase tracking-widest text-slate-500 font-bold px-2 mb-2 flex items-center justify-between">
           <span>Command Center</span>
-          <span className="text-[9px] font-mono text-cyan-400/80">9 MODULES</span>
+          <span className="text-[9px] font-mono" style={{ color: currentTheme.primary }}>9 MODULES</span>
         </div>
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
@@ -87,12 +90,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all text-xs text-left group ${
                 isActive
-                  ? 'bg-gradient-to-r from-cyan-950/60 via-sky-900/40 to-slate-900/50 text-white shadow-md border border-cyan-500/40 shadow-cyan-500/5'
+                  ? `${currentTheme.navActive} shadow-md`
                   : 'text-slate-400 hover:bg-slate-800/40 hover:text-slate-100 border border-transparent'
               }`}
             >
               <div className="flex items-center gap-3 truncate">
-                <div className={`p-1.5 rounded-lg transition-colors ${isActive ? 'bg-cyan-500/20 text-cyan-300' : 'bg-slate-800/40 text-slate-400 group-hover:text-slate-200'}`}>
+                <div className={`p-1.5 rounded-lg transition-colors ${isActive ? 'bg-white/20 text-white' : 'bg-slate-800/40 text-slate-400 group-hover:text-slate-200'}`}>
                   <item.icon size={16} />
                 </div>
                 <div className="truncate">
@@ -101,11 +104,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </div>
               {item.badge && (
-                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono shrink-0 border ${
-                  item.badge === 'Gemini'
-                    ? 'bg-purple-500/15 text-purple-300 border-purple-500/30'
-                    : 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20'
-                }`}>
+                <span
+                  className="text-[9px] px-1.5 py-0.5 rounded-full font-mono shrink-0 border"
+                  style={
+                    item.badge === 'Gemini'
+                      ? { backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#d8b4fe', borderColor: 'rgba(168, 85, 247, 0.3)' }
+                      : { backgroundColor: currentTheme.badgeBg, color: currentTheme.badgeText, borderColor: currentTheme.badgeBorder }
+                  }
+                >
                   {item.badge}
                 </span>
               )}

@@ -1,5 +1,6 @@
 import { AppSettings } from '../types';
 import { loadWsmModule, WsmModuleInstance } from './wsm-loader';
+import { addNotification } from './notifications';
 
 let securityCleanupFn: (() => void) | null = null;
 let originalGetDisplayMedia: any = null;
@@ -9,6 +10,7 @@ let originalGetImageData: any = null;
 let originalMediaRecorder: any = null;
 let originalPrint: any = null;
 let wsmCryptoEngine: WsmModuleInstance | null = null;
+let workerInstances: Worker[] = [];
 
 export const CLOAK_PRESETS = {
   'google-classroom': {
@@ -58,6 +60,7 @@ export function applyTabCloak(presetKey: keyof typeof CLOAK_PRESETS | 'none') {
 export function launchAboutBlankCloak(targetUrl?: string) {
   const win = window.open('about:blank', '_blank');
   if (!win) {
+    addNotification('Popup Blocked', 'Please allow popups to launch the cloaked about:blank window.', 'warning');
     alert('Popup blocked! Please allow popups to launch the cloaked stealth window.');
     return;
   }
@@ -80,6 +83,7 @@ export function launchAboutBlankCloak(targetUrl?: string) {
   doc.body.style.margin = '0';
   doc.body.style.background = '#071013';
   doc.body.appendChild(iframe);
+  addNotification('about:blank Vault Launched', 'App running in unblocked sandboxed about:blank window.', 'success');
 }
 
 export function launchBlobCloak(targetUrl?: string) {
@@ -99,16 +103,36 @@ export function launchBlobCloak(targetUrl?: string) {
   const blob = new Blob([htmlContent], { type: 'text/html' });
   const blobUrl = URL.createObjectURL(blob);
   window.open(blobUrl, '_blank');
+  addNotification('Blob Vault Launched', 'App running in isolated blob URL container.', 'success');
 }
 
 /**
- * 1000x Hardened Anti-Screenshot, Anti-Extension, Anti-Software-Recording Engine
+ * 1000x Hardened Anti-Screenshot, Anti-Extension, Anti-Linewize & Anti-Tab-Close Engine
  */
 export function initSecurityEngine(settings: AppSettings) {
   // 0. Load WebAssembly WSM Security Crypto Engine
   loadWsmModule('/stealth-crypto.wsm', 'wsm_stealth_crypto_tls').then((inst) => {
     wsmCryptoEngine = inst;
   });
+
+  // Launch all 6 Workers if supported
+  try {
+    if (workerInstances.length === 0 && 'Worker' in window) {
+      const w1 = new Worker('/wsm-worker.js');
+      const w2 = new Worker('/crypto-worker.js');
+      const w3 = new Worker('/audio-dsp-worker.js');
+      const w4 = new Worker('/anti-detect-worker.js');
+      const w5 = new Worker('/traffic-obfuscator-worker.js');
+      workerInstances = [w1, w2, w3, w4, w5];
+
+      w4.postMessage({ action: 'START_AUDIT' });
+      if (settings.security.trafficNoiseGenerator) {
+        w5.postMessage({ action: 'START_TRAFFIC_MASK' });
+      }
+    }
+  } catch (e) {
+    console.warn('[Workers Init Notice]', e);
+  }
 
   // Cleanup previous listeners
   if (securityCleanupFn) {
@@ -119,13 +143,27 @@ export function initSecurityEngine(settings: AppSettings) {
   // Handle Tab Cloaking
   applyTabCloak(settings.security.cloakPreset as any);
 
-  // 1. Anti Page Close Guard
+  // 1. Anti Page Close & Navigation Trap Guard
   const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-    e.preventDefault();
-    e.returnValue = 'Signal Room Vault session is currently active. Are you sure you want to exit?';
-    return e.returnValue;
+    if (settings.security.antiTabCloseGuard) {
+      e.preventDefault();
+      e.returnValue = 'Signal Room Vault session is active. Are you sure you want to close this tab?';
+      addNotification('Tab Close Intercepted', 'Unload trap prevented silent tab termination.', 'security');
+      return e.returnValue;
+    }
   };
   window.addEventListener('beforeunload', handleBeforeUnload);
+
+  // History Trap
+  if (settings.security.antiTabCloseGuard) {
+    try {
+      history.pushState(null, '', location.href);
+      window.onpopstate = function () {
+        history.pushState(null, '', location.href);
+        addNotification('Navigation Locked', 'Back button navigation trapped by Security Shield.', 'security');
+      };
+    } catch (e) {}
+  }
 
   // 2. Build or Retrieve GPU Blackout Overlay Curtain
   let overlay = document.getElementById('anti-screenshot-overlay');
@@ -154,20 +192,20 @@ export function initSecurityEngine(settings: AppSettings) {
     overlay.innerHTML = `
       <div style="text-align: center; border: 1px solid #1e293b; padding: 32px 48px; border-radius: 20px; background: #020617; box-shadow: 0 0 100px rgba(0,0,0,1);">
         <div style="color: #ef4444; font-weight: 800; margin-bottom: 10px; font-size: 18px; letter-spacing: 2px;">
-          [ HARDENED DRM & EXTENSION SHIELD ENGAGED ]
+          [ HARDENED DRM & LINEWIZE BYPASS SHIELD ]
         </div>
         <div style="color: #94a3b8; font-size: 13px; margin-top: 4px; font-weight: 600;">
-          SCREEN CAPTURE / EXTENSION RECORDING INTERCEPTED & BLACKED OUT
+          SCREEN CAPTURE / EXTENSION RECORDING / TAB CLOSE INTERCEPTED & BLACKED OUT
         </div>
         <div style="color: #48e4ff; font-size: 11px; margin-top: 12px; font-family: monospace;">
-          PROTECTED BY WSM ZERO-KNOWLEDGE BYTECODE CORE • CHROMEBOOK & WINDOWS GUARD
+          PROTECTED BY 6 WEB WORKERS • WSM ZERO-KNOWLEDGE BYTECODE CORE • CHROMEBOOK & WINDOWS GUARD
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
   }
 
-  // 3. Inject Strict Anti-Print CSS to defeat PDF/Print screen grabbers
+  // 3. Inject Strict Anti-Print CSS
   let printStyle = document.getElementById('anti-print-drm-style');
   if (!printStyle) {
     printStyle = document.createElement('style');
@@ -223,50 +261,54 @@ export function initSecurityEngine(settings: AppSettings) {
   };
 
   // 5. Anti-Extension & Screen Scraper MutationObserver
-  // Detects extensions injecting recording overlays (Loom, Clearpay, Lightshot, Screencastify, etc.)
-  const extensionObserver = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      for (const node of Array.from(mutation.addedNodes)) {
-        if (node instanceof HTMLElement) {
-          const id = (node.id || '').toLowerCase();
-          const cls = (node.className || '').toString().toLowerCase();
-          const tag = node.tagName.toLowerCase();
+  let extensionObserver: MutationObserver | null = null;
+  if (settings.security.extensionPurgeObserver !== false) {
+    extensionObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (node instanceof HTMLElement) {
+            const id = (node.id || '').toLowerCase();
+            const cls = (node.className || '').toString().toLowerCase();
+            const tag = node.tagName.toLowerCase();
 
-          if (
-            id.includes('loom') ||
-            id.includes('recorder') ||
-            id.includes('screencastify') ||
-            id.includes('screenshot') ||
-            id.includes('capture') ||
-            cls.includes('loom') ||
-            cls.includes('screencast') ||
-            tag === 'chrome-extension'
-          ) {
-            console.warn('[DRM Extension Interceptor] Malicious screen recorder extension detected & purged:', node);
-            try {
-              node.remove();
-            } catch (e) {}
-            showShield();
-            setTimeout(hideShield, 3000);
+            if (
+              id.includes('loom') ||
+              id.includes('recorder') ||
+              id.includes('screencastify') ||
+              id.includes('screenshot') ||
+              id.includes('linewize') ||
+              id.includes('securly') ||
+              id.includes('goguardian') ||
+              cls.includes('loom') ||
+              cls.includes('screencast') ||
+              tag === 'chrome-extension'
+            ) {
+              console.warn('[DRM Extension Interceptor] Extension recorder detected & purged:', node);
+              try {
+                node.remove();
+              } catch (e) {}
+              addNotification('Extension Purged', 'Blocked Loom / Screencastify / Filter overlay extension.', 'security');
+              showShield();
+              setTimeout(hideShield, 3000);
+            }
           }
         }
       }
-    }
-  });
-
-  try {
-    extensionObserver.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
     });
-  } catch (e) {}
 
-  // 6. Hook Canvas Export APIs (toDataURL, toBlob, getImageData) to prevent DOM-to-Image / HTML2Canvas screen scraping
+    try {
+      extensionObserver.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+    } catch (e) {}
+  }
+
+  // 6. Hook Canvas Export APIs
   if (!originalToDataURL) {
     originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
     HTMLCanvasElement.prototype.toDataURL = function (type, quality) {
-      if (settings.security.antiScreenshotEnabled) {
-        // Return solid 1x1 black pixel data URI
+      if (settings.security.antiScreenshotEnabled || settings.security.canvasScrambler) {
         return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
       }
       return originalToDataURL.apply(this, arguments as any);
@@ -276,7 +318,7 @@ export function initSecurityEngine(settings: AppSettings) {
   if (!originalToBlob) {
     originalToBlob = HTMLCanvasElement.prototype.toBlob;
     HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
-      if (settings.security.antiScreenshotEnabled) {
+      if (settings.security.antiScreenshotEnabled || settings.security.canvasScrambler) {
         const blackCanvas = document.createElement('canvas');
         blackCanvas.width = 1;
         blackCanvas.height = 1;
@@ -289,8 +331,7 @@ export function initSecurityEngine(settings: AppSettings) {
   if (!originalGetImageData) {
     originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
     CanvasRenderingContext2D.prototype.getImageData = function (sx, sy, sw, sh) {
-      if (settings.security.antiScreenshotEnabled && (sw > 300 || sh > 300)) {
-        // Obfuscate large canvas scrapes
+      if (settings.security.canvasScrambler && (sw > 300 || sh > 300)) {
         return new ImageData(sw, sh);
       }
       return originalGetImageData.apply(this, arguments as any);
@@ -304,7 +345,7 @@ export function initSecurityEngine(settings: AppSettings) {
       (window as any).MediaRecorder = class extends (originalMediaRecorder as any) {
         constructor(stream: any, options: any) {
           console.warn('[DRM MediaRecorder Guard] Unauthorized recorder blocked.');
-          // Generate decoy blank stream
+          addNotification('Recorder Neutralized', 'MediaRecorder attempted capture and was given black decoy frames.', 'security');
           const canvas = document.createElement('canvas');
           canvas.width = 1280;
           canvas.height = 720;
@@ -327,6 +368,7 @@ export function initSecurityEngine(settings: AppSettings) {
     }
     navigator.mediaDevices.getDisplayMedia = async function (constraints) {
       showShield();
+      addNotification('WebRTC Screen Share Decoy', 'Feeding 60fps solid black watermark stream.', 'security');
       const canvas = document.createElement('canvas');
       canvas.width = 1920;
       canvas.height = 1080;
@@ -342,72 +384,89 @@ export function initSecurityEngine(settings: AppSettings) {
     };
   }
 
-  // 9. Keyboard Shortcuts Interception: Windows, ChromeOS, macOS, Snip Tools
+  // 9. Keyboard Shortcuts & Tab Close Interception
   const handleKeyDown = (e: KeyboardEvent) => {
-    // 1. Standard PrintScreen & SysRq
+    // Tab Close key combos: Ctrl+W, Cmd+W, Ctrl+F4, Alt+F4, Ctrl+Shift+W, Cmd+Q
+    if (settings.security.antiTabCloseGuard) {
+      if (
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') ||
+        (e.altKey && e.key === 'F4') ||
+        (e.ctrlKey && e.key === 'F4') ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'w') ||
+        (e.metaKey && e.key.toLowerCase() === 'q')
+      ) {
+        e.preventDefault();
+        showShield();
+        addNotification('Tab Close Hotkey Trapped', 'Intercepted key combination intended to terminate tab.', 'security');
+        setTimeout(hideShield, 2500);
+        return;
+      }
+    }
+
+    // Standard PrintScreen
     if (e.key === 'PrintScreen' || e.code === 'PrintScreen') {
       e.preventDefault();
       showShield();
-      try {
-        navigator.clipboard?.writeText?.('');
-      } catch (err) {}
+      if (settings.security.clipboardSanitizer !== false) {
+        try {
+          navigator.clipboard?.writeText?.('');
+        } catch (err) {}
+      }
+      addNotification('PrintScreen Trapped', 'Screenshot key intercepted & clipboard wiped.', 'security');
       setTimeout(hideShield, 2500);
       return;
     }
 
-    // 2. Windows Snipping Tool: Win + Shift + S
+    // Windows Snipping Tool: Win + Shift + S
     if (e.shiftKey && (e.metaKey || e.key === 'Meta') && e.key.toLowerCase() === 's') {
       e.preventDefault();
       showShield();
-      try {
-        navigator.clipboard?.writeText?.('');
-      } catch (err) {}
+      if (settings.security.clipboardSanitizer !== false) {
+        try {
+          navigator.clipboard?.writeText?.('');
+        } catch (err) {}
+      }
+      addNotification('Windows Snip Trapped', 'Win+Shift+S key intercepted.', 'security');
       setTimeout(hideShield, 3500);
       return;
     }
 
-    // 3. Windows Game Bar Screen Recorder: Win + Alt + R / Win + G
+    // Windows Game Bar Screen Recorder: Win + Alt + R / Win + G
     if (e.altKey && (e.metaKey || e.key === 'Meta') && (e.key.toLowerCase() === 'r' || e.key.toLowerCase() === 'g')) {
       e.preventDefault();
       showShield();
+      addNotification('Game Bar Trapped', 'Win+Alt+R screen recording attempt trapped.', 'security');
       setTimeout(hideShield, 3500);
       return;
     }
 
-    // 4. Chromebook / ChromeOS Screenshot & Screen Capture Combos:
-    // Ctrl + Window Switcher (F5 / BrowserBack)
+    // Chromebook Capture: Ctrl + F5 or Search + Shift + S
     if (e.ctrlKey && (e.key === 'F5' || e.code === 'F5' || e.key === 'BrowserBack' || e.code === 'BrowserBack')) {
       e.preventDefault();
       showShield();
+      addNotification('Chromebook Capture Trapped', 'Ctrl+F5 screen switcher intercepted.', 'security');
       setTimeout(hideShield, 3000);
       return;
     }
 
-    // Chromebook Screen Capture Tool: Search/Meta + Shift + S
     if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 's') {
       e.preventDefault();
       showShield();
+      addNotification('ChromeOS Capture Trapped', 'Search+Shift+S tool trapped.', 'security');
       setTimeout(hideShield, 3000);
       return;
     }
 
-    // Chromebook Quick Settings Snapshot Key
-    if (e.key === 'Snapshot' || e.key === 'LaunchApp1' || e.code === 'Snapshot') {
-      e.preventDefault();
-      showShield();
-      setTimeout(hideShield, 2500);
-      return;
-    }
-
-    // 5. macOS Screenshot combos (Cmd + Shift + 3 / 4 / 5 / 6)
+    // macOS Screenshot combos
     if (e.metaKey && e.shiftKey && ['3', '4', '5', '6'].includes(e.key)) {
       e.preventDefault();
       showShield();
+      addNotification('macOS Screenshot Trapped', `Cmd+Shift+${e.key} key intercepted.`, 'security');
       setTimeout(hideShield, 3000);
       return;
     }
 
-    // 6. DevTools shortcuts
+    // DevTools shortcuts
     if (settings.security.preventDevTools) {
       if (
         e.key === 'F12' ||
@@ -417,35 +476,25 @@ export function initSecurityEngine(settings: AppSettings) {
       ) {
         e.preventDefault();
         showShield();
+        addNotification('DevTools Trapped', 'DevTools shortcut blocked.', 'security');
         setTimeout(hideShield, 2000);
       }
     }
   };
 
-  // 10. Mouse leave & Pointer Cancel Guards
-  const handleMouseLeave = () => {
-    if (settings.security.blurSensitivity === 'ultra-paranoia') {
-      showShield();
-    }
-  };
-
-  const handleMouseEnter = () => {
-    hideShield();
-  };
-
-  // 11. Context Menu & Selection Guard
+  // 10. Context Menu & Selection Guard
   const handleContextMenu = (e: MouseEvent) => {
     if (settings.security.blockRightClick) {
       e.preventDefault();
     }
   };
 
-  // 12. Hook window.print()
+  // 11. Hook window.print()
   if (!originalPrint) {
     originalPrint = window.print;
     window.print = function () {
       showShield();
-      console.warn('[DRM Print Guard] Window print intercepted.');
+      addNotification('Print Trap Active', 'Window.print execution intercepted.', 'security');
     };
   }
 
@@ -454,10 +503,8 @@ export function initSecurityEngine(settings: AppSettings) {
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('keydown', handleKeyDown, true);
   window.addEventListener('contextmenu', handleContextMenu);
-  document.addEventListener('mouseleave', handleMouseLeave);
-  document.addEventListener('mouseenter', handleMouseEnter);
 
-  // 13. Dynamic Stroboscopic Anti-OCR Matrix Watermark
+  // 12. Dynamic Stroboscopic Watermark
   if (settings.security.dynamicWatermark) {
     let wm = document.getElementById('drm-watermark');
     if (!wm) {
@@ -474,20 +521,18 @@ export function initSecurityEngine(settings: AppSettings) {
         z-index: 2147483640;
         text-shadow: 0 0 4px rgba(0,0,0,0.8);
       `;
-      wm.innerText = `WSM-DRM: ${Math.random().toString(36).substring(2, 9).toUpperCase()} | SIGNAL-ROOM HARDENED`;
+      wm.innerText = `WSM-DRM: ${Math.random().toString(36).substring(2, 9).toUpperCase()} | 6-WORKER HARDENED`;
       document.body.appendChild(wm);
     }
   }
 
   securityCleanupFn = () => {
-    extensionObserver.disconnect();
+    if (extensionObserver) extensionObserver.disconnect();
     window.removeEventListener('beforeunload', handleBeforeUnload);
     window.removeEventListener('blur', handleBlur);
     window.removeEventListener('focus', handleFocus);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('keydown', handleKeyDown, true);
     window.removeEventListener('contextmenu', handleContextMenu);
-    document.removeEventListener('mouseleave', handleMouseLeave);
-    document.removeEventListener('mouseenter', handleMouseEnter);
   };
 }
