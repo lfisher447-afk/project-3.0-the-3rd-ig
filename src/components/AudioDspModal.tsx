@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   X,
   Sliders,
@@ -14,9 +14,31 @@ import {
   Music2,
   CheckCircle2,
   SlidersHorizontal,
+  Layers,
+  Wand2,
+  Maximize2,
+  Copy,
+  Download,
+  Upload,
+  BarChart2,
+  Shuffle,
+  TrendingUp,
+  TrendingDown,
+  Volume1,
+  RefreshCw,
 } from 'lucide-react';
-import { AppSettings, SpatialMode, Track } from '../types';
+import { AppSettings, EQBandCount, SpatialMode, Track } from '../types';
 import { audioEngine } from '../lib/audioEngine';
+import {
+  BAND_CONFIGURATIONS,
+  SUPPORTED_BAND_COUNTS,
+  MASTER_EQ_PRESETS,
+  formatFreq,
+  interpolateGainsForBands,
+  transformGains,
+  calculateAutoGainCompensation,
+  EQPresetDef,
+} from '../lib/eqConfig';
 
 interface AudioDspModalProps {
   isOpen: boolean;
@@ -34,20 +56,268 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
   currentTrack,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [isPlayingTestTone, setIsPlayingTestTone] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'eq' | 'spatial' | 'compressor' | 'analyzer'>('eq');
-  const [copiedPreset, setCopiedPreset] = useState(false);
+  const [playingTone, setPlayingTone] = useState<string | null>(null);
+  const [presetCategory, setPresetCategory] = useState<string>('All');
+  const [presetSearch, setPresetSearch] = useState('');
+  const [copiedStatus, setCopiedStatus] = useState<string | null>(null);
+  const [importJsonText, setImportJsonText] = useState('');
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [analyzerFftSize, setAnalyzerFftSize] = useState<number>(512);
+  const [gainReductionDb, setGainReductionDb] = useState<number>(0);
+  const [peakFrequencyHz, setPeakFrequencyHz] = useState<number>(0);
 
-  // Equalizer presets
-  const eqPresets: Record<string, { bass: number; lowMid: number; vocal: number; highMid: number; treble: number; desc: string }> = {
-    'Flat Reference': { bass: 0, lowMid: 0, vocal: 0, highMid: 0, treble: 0, desc: 'Uncolored studio direct monitoring' },
-    'Bass Boost 808': { bass: 8.5, lowMid: 4.5, vocal: 0, highMid: 1.5, treble: 2.5, desc: 'Deep sub-bass punch & weight' },
-    'Vocal Polish': { bass: -2, lowMid: 1, vocal: 6.5, highMid: 4, treble: 2, desc: 'Crisp presence & vocal intelligibility' },
-    'Cyberpunk Synth': { bass: 7.5, lowMid: 2, vocal: -1.5, highMid: 5.5, treble: 8, desc: 'Bright analog highs & rolling bass' },
-    'Club Soundstage': { bass: 9, lowMid: 3, vocal: -1, highMid: 4, treble: 6.5, desc: 'Wide electronic venue contour' },
-    'Acoustic Velvet': { bass: 3, lowMid: 5, vocal: 3, highMid: 1, treble: 4.5, desc: 'Warm organic guitars & piano' },
-    'Lo-Fi Vinyl Warmth': { bass: 5, lowMid: 6, vocal: -2, highMid: -3, treble: -4, desc: 'Vintage warm tape rolloff' },
-    'Air & Hi-Fi Sparkle': { bass: 2, lowMid: 0, vocal: 2, highMid: 6, treble: 9.5, desc: 'Silky modern pop top-end' },
+  // Active band count and configuration
+  const activeBandCount: EQBandCount = settings.eq.bandCount || 5;
+  const currentBandDefs = useMemo(() => {
+    return BAND_CONFIGURATIONS[activeBandCount] || BAND_CONFIGURATIONS[5];
+  }, [activeBandCount]);
+
+  // Current active gains array for the current band count
+  const currentGains = useMemo(() => {
+    if (Array.isArray(settings.eq.gains) && settings.eq.gains.length === activeBandCount) {
+      return settings.eq.gains;
+    }
+    if (settings.eq.modeGains && settings.eq.modeGains[activeBandCount]) {
+      return settings.eq.modeGains[activeBandCount]!;
+    }
+    // Fallback if legacy 5-band properties exist
+    if (activeBandCount === 5) {
+      return [
+        settings.eq.bass ?? 0,
+        settings.eq.lowMid ?? 0,
+        settings.eq.vocal ?? 0,
+        settings.eq.highMid ?? 0,
+        settings.eq.treble ?? 0,
+      ];
+    }
+    return new Array(activeBandCount).fill(0);
+  }, [settings.eq, activeBandCount]);
+
+  // Calculated auto gain offset
+  const autoGainOffset = useMemo(() => {
+    return calculateAutoGainCompensation(currentGains);
+  }, [currentGains]);
+
+  // Handle band count switch with curve preservation/interpolation
+  const handleSelectBandCount = (count: EQBandCount) => {
+    if (count === activeBandCount) return;
+
+    let targetGains: number[];
+    if (settings.eq.modeGains && settings.eq.modeGains[count]) {
+      targetGains = settings.eq.modeGains[count]!;
+    } else {
+      // Intelligently interpolate existing curve to new band count
+      const existingBands = currentBandDefs;
+      const points = existingBands.map((b, i) => ({
+        freq: b.freq,
+        gain: currentGains[i] ?? 0,
+      }));
+      targetGains = interpolateGainsForBands(count, points);
+    }
+
+    onUpdateSettings((prev) => {
+      const updatedModeGains = {
+        ...(prev.eq.modeGains || {}),
+        [activeBandCount]: currentGains,
+        [count]: targetGains,
+      };
+
+      return {
+        ...prev,
+        eq: {
+          ...prev.eq,
+          bandCount: count,
+          gains: targetGains,
+          modeGains: updatedModeGains,
+          // Sync legacy 5-band keys if switching to or from 5 bands
+          ...(count === 5
+            ? {
+                bass: targetGains[0],
+                lowMid: targetGains[1],
+                vocal: targetGains[2],
+                highMid: targetGains[3],
+                treble: targetGains[4],
+              }
+            : {}),
+        },
+      };
+    });
+  };
+
+  // Update single band gain
+  const handleBandGainChange = (bandIndex: number, gainVal: number) => {
+    const clampedGain = Math.max(-12, Math.min(12, Math.round(gainVal * 10) / 10));
+    const newGains = [...currentGains];
+    newGains[bandIndex] = clampedGain;
+
+    onUpdateSettings((prev) => {
+      const updatedModeGains = {
+        ...(prev.eq.modeGains || {}),
+        [activeBandCount]: newGains,
+      };
+
+      return {
+        ...prev,
+        eq: {
+          ...prev.eq,
+          gains: newGains,
+          modeGains: updatedModeGains,
+          activePreset: undefined,
+          ...(activeBandCount === 5
+            ? {
+                bass: newGains[0],
+                lowMid: newGains[1],
+                vocal: newGains[2],
+                highMid: newGains[3],
+                treble: newGains[4],
+              }
+            : {}),
+        },
+      };
+    });
+  };
+
+  // Apply master preset with curve interpolation
+  const handleApplyPreset = (presetKey: string) => {
+    const preset = MASTER_EQ_PRESETS[presetKey];
+    if (!preset) return;
+
+    const targetGains = interpolateGainsForBands(activeBandCount, preset.points);
+
+    onUpdateSettings((prev) => ({
+      ...prev,
+      eq: {
+        ...prev.eq,
+        enabled: true,
+        activePreset: presetKey,
+        gains: targetGains,
+        modeGains: {
+          ...(prev.eq.modeGains || {}),
+          [activeBandCount]: targetGains,
+        },
+        ...(activeBandCount === 5
+          ? {
+              bass: targetGains[0],
+              lowMid: targetGains[1],
+              vocal: targetGains[2],
+              highMid: targetGains[3],
+              treble: targetGains[4],
+            }
+          : {}),
+      },
+    }));
+  };
+
+  // Transform current gains (flatten, invert, smooth, tilts, boosts)
+  const handleTransform = (
+    action: 'flatten' | 'invert' | 'smooth' | 'bass-tilt' | 'treble-tilt' | 'boost-3db' | 'cut-3db' | 'random'
+  ) => {
+    const newGains = transformGains(currentGains, action, 12);
+    onUpdateSettings((prev) => ({
+      ...prev,
+      eq: {
+        ...prev.eq,
+        gains: newGains,
+        activePreset: action === 'flatten' ? 'Flat Reference' : undefined,
+        modeGains: {
+          ...(prev.eq.modeGains || {}),
+          [activeBandCount]: newGains,
+        },
+        ...(activeBandCount === 5
+          ? {
+              bass: newGains[0],
+              lowMid: newGains[1],
+              vocal: newGains[2],
+              highMid: newGains[3],
+              treble: newGains[4],
+            }
+          : {}),
+      },
+    }));
+  };
+
+  // Test tone / Noise generation handlers
+  const handleToggleTestTone = (label: string, freq?: number, type: OscillatorType = 'sine') => {
+    if (playingTone === label) {
+      audioEngine.stopTestTone();
+      setPlayingTone(null);
+    } else {
+      if (label === 'pink-noise') {
+        audioEngine.playPinkNoise();
+      } else if (label === 'sweep') {
+        audioEngine.playSweep(4);
+      } else if (freq) {
+        audioEngine.playTestTone(freq, type);
+      }
+      setPlayingTone(label);
+    }
+  };
+
+  // Export EQ curve to clipboard
+  const handleExportEQ = () => {
+    const exportData = {
+      name: settings.eq.activePreset || 'Custom Spotui Curve',
+      bandCount: activeBandCount,
+      gains: currentGains,
+      preAmpGain: settings.eq.preAmpGain || 0,
+      autoGainCompensation: settings.eq.autoGainCompensation || false,
+      qFactorMultiplier: settings.eq.qFactorMultiplier || 1.0,
+      bands: currentBandDefs.map((b, i) => ({
+        freq: b.freq,
+        label: b.label,
+        gain: currentGains[i] ?? 0,
+      })),
+      timestamp: Date.now(),
+    };
+    navigator.clipboard.writeText(JSON.stringify(exportData, null, 2));
+    setCopiedStatus('Exported JSON to Clipboard!');
+    setTimeout(() => setCopiedStatus(null), 2500);
+  };
+
+  // Import custom JSON curve
+  const handleImportEQ = () => {
+    try {
+      const parsed = JSON.parse(importJsonText);
+      if (Array.isArray(parsed.gains)) {
+        const importGains: number[] = parsed.gains.map((g: any) =>
+          typeof g === 'number' ? Math.max(-12, Math.min(12, g)) : 0
+        );
+
+        let finalCount: EQBandCount = activeBandCount;
+        if (SUPPORTED_BAND_COUNTS.includes(parsed.bandCount)) {
+          finalCount = parsed.bandCount;
+        } else if (SUPPORTED_BAND_COUNTS.includes(importGains.length as any)) {
+          finalCount = importGains.length as any;
+        }
+
+        onUpdateSettings((prev) => ({
+          ...prev,
+          eq: {
+            ...prev.eq,
+            enabled: true,
+            bandCount: finalCount,
+            gains: importGains,
+            preAmpGain: typeof parsed.preAmpGain === 'number' ? parsed.preAmpGain : prev.eq.preAmpGain,
+            autoGainCompensation: Boolean(parsed.autoGainCompensation),
+            activePreset: parsed.name || 'Imported User Preset',
+            modeGains: {
+              ...(prev.eq.modeGains || {}),
+              [finalCount]: importGains,
+            },
+          },
+        }));
+
+        setShowImportDialog(false);
+        setImportJsonText('');
+        setCopiedStatus('Preset Loaded Successfully!');
+        setTimeout(() => setCopiedStatus(null), 2500);
+      } else {
+        alert('Invalid preset JSON. Missing "gains" array.');
+      }
+    } catch (e) {
+      alert('Failed to parse JSON preset. Please check formatting.');
+    }
   };
 
   // Real-time canvas spectrum visualization loop
@@ -66,66 +336,133 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
       const width = canvas.width;
       const height = canvas.height;
 
+      // Track compressor gain reduction and peak frequency
+      const red = audioEngine.getCompressionReduction();
+      setGainReductionDb(Math.round(red * 10) / 10);
+
+      let maxBinVal = 0;
+      let maxBinIdx = 0;
+      for (let i = 0; i < freqData.length; i++) {
+        if (freqData[i] > maxBinVal) {
+          maxBinVal = freqData[i];
+          maxBinIdx = i;
+        }
+      }
+      if (maxBinVal > 30) {
+        const nyquist = 24000;
+        const estHz = Math.round((maxBinIdx / freqData.length) * nyquist);
+        setPeakFrequencyHz(estHz);
+      }
+
       ctx.clearRect(0, 0, width, height);
 
-      // Gradient background grid lines
-      ctx.strokeStyle = 'rgba(72, 228, 255, 0.08)';
+      // Grid background lines
+      ctx.strokeStyle = 'rgba(72, 228, 255, 0.07)';
       ctx.lineWidth = 1;
-      for (let y = 0; y < height; y += 20) {
+
+      // Horizontal dB guidelines (+12dB, +6dB, 0dB, -6dB, -12dB)
+      const dBLabels = ['+12dB', '+6dB', '0dB', '-6dB', '-12dB'];
+      const dbYSteps = [
+        0.08 * height,
+        0.28 * height,
+        0.5 * height,
+        0.72 * height,
+        0.92 * height,
+      ];
+
+      dbYSteps.forEach((y, i) => {
         ctx.beginPath();
+        ctx.setLineDash([4, 4]);
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
         ctx.stroke();
-      }
+        ctx.setLineDash([]);
 
-      // Draw frequency spectrum bars
-      const barCount = 48;
-      const barWidth = width / barCount - 2;
+        ctx.fillStyle = i === 2 ? 'rgba(72, 228, 255, 0.4)' : 'rgba(120, 157, 154, 0.25)';
+        ctx.font = '9px monospace';
+        ctx.fillText(dBLabels[i], 8, y - 2);
+      });
+
+      // Frequency spectrum bars (64 bars)
+      const barCount = 64;
+      const barSpacing = 2;
+      const barWidth = (width - (barCount - 1) * barSpacing) / barCount;
 
       for (let i = 0; i < barCount; i++) {
-        const dataIndex = Math.floor((i / barCount) * (freqData.length * 0.7));
+        const dataIndex = Math.floor((i / barCount) * (freqData.length * 0.8));
         const val = freqData[dataIndex] || 0;
         const percent = val / 255;
-        const barHeight = Math.max(3, percent * height);
+        const barHeight = Math.max(2, percent * (height * 0.85));
 
-        const x = i * (barWidth + 2);
+        const x = i * (barWidth + barSpacing);
         const y = height - barHeight;
 
         const grad = ctx.createLinearGradient(0, height, 0, 0);
-        grad.addColorStop(0, '#0e3843');
-        grad.addColorStop(0.5, '#48e4ff');
-        grad.addColorStop(1, '#8df5be');
+        grad.addColorStop(0, '#04171d');
+        grad.addColorStop(0.3, '#0e4250');
+        grad.addColorStop(0.7, '#38bdf8');
+        grad.addColorStop(1, '#86efac');
 
         ctx.fillStyle = grad;
         ctx.fillRect(x, y, barWidth, barHeight);
       }
 
-      // Draw active 5-band curve overlay
-      if (settings.eq.enabled) {
-        const gains = [
-          settings.eq.bass || 0,
-          settings.eq.lowMid || 0,
-          settings.eq.vocal || 0,
-          settings.eq.highMid || 0,
-          settings.eq.treble || 0,
-        ];
-
+      // Draw active multi-band response curve overlay
+      if (settings.eq.enabled && currentBandDefs.length > 0) {
         ctx.beginPath();
-        ctx.strokeStyle = '#38bdf8';
+        ctx.strokeStyle = '#48e4ff';
         ctx.lineWidth = 2.5;
         ctx.shadowColor = '#48e4ff';
-        ctx.shadowBlur = 8;
+        ctx.shadowBlur = 10;
 
-        gains.forEach((gain, idx) => {
-          const ptX = (idx / 4) * (width - 24) + 12;
-          const ptY = height / 2 - (gain / 15) * (height / 2.5);
-          if (idx === 0) {
-            ctx.moveTo(ptX, ptY);
-          } else {
-            ctx.lineTo(ptX, ptY);
-          }
+        const numBands = currentBandDefs.length;
+        const points: { x: number; y: number }[] = [];
+
+        currentBandDefs.forEach((def, idx) => {
+          const gain = currentGains[idx] ?? 0;
+          // Logarithmic X coordinate approximation across spectrum
+          const logMin = Math.log10(20);
+          const logMax = Math.log10(20000);
+          const logF = Math.log10(Math.max(20, Math.min(20000, def.freq)));
+          const normX = (logF - logMin) / (logMax - logMin);
+
+          const ptX = normX * (width - 40) + 20;
+          // Gain mapping: +12dB -> top (0.1*height), 0dB -> middle (0.5*height), -12dB -> bottom (0.9*height)
+          const ptY = height * 0.5 - (gain / 12) * (height * 0.4);
+
+          points.push({ x: ptX, y: ptY });
         });
-        ctx.stroke();
+
+        // Smooth cubic bezier spline through band points
+        if (points.length > 0) {
+          ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 0; i < points.length - 1; i++) {
+            const p0 = i > 0 ? points[i - 1] : points[i];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = i < points.length - 2 ? points[i + 2] : p2;
+
+            const cp1x = p1.x + (p2.x - p0.x) / 6;
+            const cp1y = p1.y + (p2.y - p0.y) / 6;
+            const cp2x = p2.x - (p3.x - p1.x) / 6;
+            const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+          }
+          ctx.stroke();
+
+          // Draw node dots at each band frequency
+          points.forEach((pt, i) => {
+            ctx.beginPath();
+            ctx.fillStyle = '#ffffff';
+            ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#0e3843';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          });
+        }
+
         ctx.shadowBlur = 0;
       }
 
@@ -138,52 +475,29 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
       cancelAnimationFrame(animationFrameId);
       audioEngine.stopTestTone();
     };
-  }, [isOpen, settings.eq]);
+  }, [isOpen, settings.eq, activeBandCount, currentGains, currentBandDefs]);
 
   if (!isOpen) return null;
 
-  const applyPreset = (pName: string) => {
-    const p = eqPresets[pName];
-    if (!p) return;
-    onUpdateSettings((prev) => ({
-      ...prev,
-      eq: {
-        ...prev.eq,
-        enabled: true,
-        bass: p.bass,
-        lowMid: p.lowMid,
-        vocal: p.vocal,
-        highMid: p.highMid,
-        treble: p.treble,
-      },
-    }));
-  };
-
-  const handleTestTone = (freq: number, type: OscillatorType, label: string) => {
-    if (isPlayingTestTone === label) {
-      audioEngine.stopTestTone();
-      setIsPlayingTestTone(null);
-    } else {
-      audioEngine.playTestTone(freq, type);
-      setIsPlayingTestTone(label);
-    }
-  };
-
-  const handleExportEQ = () => {
-    const jsonStr = JSON.stringify(settings.eq, null, 2);
-    navigator.clipboard.writeText(jsonStr);
-    setCopiedPreset(true);
-    setTimeout(() => setCopiedPreset(false), 2000);
-  };
+  // Filtered preset list
+  const filteredPresets = Object.entries(MASTER_EQ_PRESETS).filter(([key, p]) => {
+    const matchesCategory = presetCategory === 'All' || p.category === presetCategory;
+    const matchesSearch =
+      presetSearch === '' ||
+      p.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
+      p.description.toLowerCase().includes(presetSearch.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 md:p-6 select-none animate-in fade-in duration-200">
-      <div className="bg-gradient-to-b from-[#09171b] via-[#061215] to-[#040e11] border border-[#234b54] rounded-3xl w-full max-w-4xl p-6 md:p-8 shadow-[0_20px_70px_rgba(0,0,0,0.85)] relative overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 md:p-6 select-none animate-in fade-in duration-200">
+      <div className="bg-gradient-to-b from-[#09171b] via-[#061215] to-[#040e11] border border-[#234b54] rounded-3xl w-full max-w-5xl p-5 md:p-8 shadow-[0_25px_80px_rgba(0,0,0,0.9)] relative overflow-hidden flex flex-col max-h-[94vh]">
         {/* Ambient Top Glow */}
-        <div className="absolute -top-28 -right-28 w-80 h-80 bg-[#48e4ff]/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -top-32 -right-32 w-96 h-96 bg-[#48e4ff]/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-32 -left-32 w-80 h-80 bg-[#34d399]/10 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Top Header */}
-        <div className="flex items-center justify-between pb-5 border-b border-[#183942] relative z-10">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between pb-4 border-b border-[#183942] relative z-10 shrink-0">
           <div className="flex items-center gap-3.5">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#143e47] to-[#0a1f24] border border-[#48e4ff]/40 flex items-center justify-center text-[#48e4ff] shadow-lg shadow-cyan-500/20">
               <Sliders size={24} />
@@ -191,14 +505,17 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl md:text-2xl font-serif font-bold text-white tracking-tight">
-                  Spotui Master DSP & 5-Band EQ
+                  Spotui Multi-Band Studio DSP Deck
                 </h2>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-[#48e4ff] border border-cyan-500/30">
-                  48kHz / 32-bit Float
+                <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-[#48e4ff] border border-cyan-500/30 font-bold">
+                  {activeBandCount}-BAND ACTIVE
+                </span>
+                <span className="hidden sm:inline-block text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-[#34d399] border border-emerald-500/30">
+                  {audioEngine.getSampleRate()}Hz 32-Bit Float
                 </span>
               </div>
               <p className="text-xs text-[#8aaeb5] mt-0.5">
-                Hardware-accelerated Web Audio Biquad Equalizer, Spatial Acoustics & Dynamics Limiter
+                Switchable 5, 7, 10, 12, 15, 20 & 31-Band Parametric Equalizer, Spatial Acoustics & Dynamic Limiting
               </p>
             </div>
           </div>
@@ -208,257 +525,484 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
               audioEngine.stopTestTone();
               onClose();
             }}
-            className="p-2 rounded-xl bg-[#0e242a] text-[#789d9a] hover:text-white transition-colors cursor-pointer"
+            className="p-2 rounded-xl bg-[#0e242a] text-[#789d9a] hover:text-white hover:bg-[#153842] transition-colors cursor-pointer"
+            title="Close Equalizer"
           >
             <X size={20} />
           </button>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex items-center gap-2 pt-4 pb-2 border-b border-[#143139]">
-          <button
-            onClick={() => setActiveTab('eq')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
-              activeTab === 'eq'
-                ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/20'
-                : 'text-zinc-400 hover:text-white hover:bg-[#0c2227]'
-            }`}
-          >
-            <SlidersHorizontal size={14} />
-            <span>5-Band Parametric EQ</span>
-          </button>
+        {/* Primary Tabs Navigation */}
+        <div className="flex items-center justify-between gap-2 pt-3 pb-2 border-b border-[#143139] shrink-0 overflow-x-auto">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab('eq')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeTab === 'eq'
+                  ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/20'
+                  : 'text-zinc-400 hover:text-white hover:bg-[#0c2227]'
+              }`}
+            >
+              <SlidersHorizontal size={14} />
+              <span>Multi-Band EQ ({activeBandCount}B)</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('spatial')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
-              activeTab === 'spatial'
-                ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/20'
-                : 'text-zinc-400 hover:text-white hover:bg-[#0c2227]'
-            }`}
-          >
-            <Compass size={14} />
-            <span>Spatial Acoustics & Pan</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('spatial')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeTab === 'spatial'
+                  ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/20'
+                  : 'text-zinc-400 hover:text-white hover:bg-[#0c2227]'
+              }`}
+            >
+              <Compass size={14} />
+              <span>Spatial Acoustics & 3D</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('compressor')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
-              activeTab === 'compressor'
-                ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/20'
-                : 'text-zinc-400 hover:text-white hover:bg-[#0c2227]'
-            }`}
-          >
-            <Activity size={14} />
-            <span>Dynamics Limiter</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('compressor')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeTab === 'compressor'
+                  ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/20'
+                  : 'text-zinc-400 hover:text-white hover:bg-[#0c2227]'
+              }`}
+            >
+              <Activity size={14} />
+              <span>Dynamics Limiter</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('analyzer')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeTab === 'analyzer'
+                  ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/20'
+                  : 'text-zinc-400 hover:text-white hover:bg-[#0c2227]'
+              }`}
+            >
+              <BarChart2 size={14} />
+              <span>RTA Spectrum Diagnostics</span>
+            </button>
+          </div>
+
+          {/* Quick DSP Power Toggle */}
+          <div className="flex items-center gap-3 pr-1">
+            <span className="text-[11px] font-mono text-[#789d9a] hidden sm:inline">Master DSP:</span>
+            <button
+              onClick={() =>
+                onUpdateSettings((prev) => ({
+                  ...prev,
+                  eq: { ...prev.eq, enabled: !prev.eq.enabled },
+                }))
+              }
+              className={`w-12 h-6 rounded-full p-1 transition-colors flex items-center cursor-pointer ${
+                settings.eq.enabled ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+              }`}
+              title="Toggle Master DSP Active / Bypass"
+            >
+              <div
+                className={`w-4 h-4 rounded-full transition-transform ${
+                  settings.eq.enabled ? 'translate-x-6 bg-[#051a20]' : 'bg-[#789d9a]'
+                }`}
+              />
+            </button>
+          </div>
         </div>
 
-        {/* Scrollable Workspace */}
-        <div className="flex-1 overflow-y-auto space-y-6 pt-4 pr-1">
-          {/* Live FFT Spectrum Analyzer Canvas */}
+        {/* Scrollable Work Area */}
+        <div className="flex-1 overflow-y-auto space-y-5 pt-4 pr-1">
+          {/* Real-time Spectrum & Response Curve Canvas */}
           <div className="p-4 rounded-2xl bg-[#051114] border border-[#16363e] relative overflow-hidden">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#48e4ff] animate-pulse" />
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2.5">
+                <span className={`w-2.5 h-2.5 rounded-full ${settings.eq.enabled ? 'bg-[#48e4ff] animate-pulse' : 'bg-zinc-600'}`} />
                 <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
-                  Live Master Bus FFT Spectrum Visualizer
+                  Live Master Bus FFT Spectrum & {activeBandCount}-Band Curve Plot
                 </span>
+                {settings.eq.activePreset && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/70 border border-cyan-800 text-cyan-300">
+                    Preset: {settings.eq.activePreset}
+                  </span>
+                )}
               </div>
+
               <div className="flex items-center gap-3 text-[11px] font-mono text-[#789d9a]">
-                <span>60Hz Sub</span>
-                <span>•</span>
-                <span>1kHz Mid</span>
-                <span>•</span>
-                <span>12kHz Air</span>
+                {peakFrequencyHz > 0 && (
+                  <span className="text-emerald-400 font-bold">Peak: {formatFreq(peakFrequencyHz)}</span>
+                )}
+                {settings.eq.autoGainCompensation && (
+                  <span className="text-cyan-300 font-bold">Auto-Comp: {autoGainOffset > 0 ? `+${autoGainOffset}` : autoGainOffset}dB</span>
+                )}
+                <span>20Hz - 20kHz</span>
               </div>
             </div>
 
             <canvas
               ref={canvasRef}
-              width={640}
-              height={100}
-              className="w-full h-24 rounded-xl bg-[#030a0c] border border-[#0e242a]"
+              width={800}
+              height={120}
+              className="w-full h-28 rounded-xl bg-[#030a0c] border border-[#0e242a]"
             />
           </div>
 
-          {/* TAB 1: 5-BAND EQUALIZER */}
+          {/* TAB 1: MULTI-BAND EQUALIZER */}
           {activeTab === 'eq' && (
-            <div className="space-y-6">
-              {/* Controls Header */}
-              <div className="p-4 rounded-2xl bg-[#07171a] border border-[#173a43] flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
+            <div className="space-y-5">
+              {/* Band Count Selector Matrix (5, 7, 10, 12, 15, 20, 31 Bands) */}
+              <div className="p-4 rounded-2xl bg-[#07171a] border border-[#173a43] space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-white">
+                    <Layers size={15} className="text-[#48e4ff]" />
+                    <span>Select Equalizer Topology / Band Count:</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-[#789d9a]">
+                    Dynamic Biquad Filter Array
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                  {SUPPORTED_BAND_COUNTS.map((count) => {
+                    const isSelected = activeBandCount === count;
+                    return (
+                      <button
+                        key={count}
+                        onClick={() => handleSelectBandCount(count)}
+                        className={`py-2.5 px-3 rounded-xl font-mono text-xs font-bold transition-all flex flex-col items-center justify-center cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/25 border border-cyan-300'
+                            : 'bg-[#091f24] hover:bg-[#0f2e36] text-zinc-300 hover:text-white border border-[#183d47]'
+                        }`}
+                      >
+                        <span className="text-sm font-black">{count} BAND</span>
+                        <span className={`text-[9px] ${isSelected ? 'text-[#06242b]' : 'text-[#789d9a]'}`}>
+                          {count === 5
+                            ? 'Parametric'
+                            : count === 7
+                            ? 'Pro Audio'
+                            : count === 10
+                            ? '1-Octave'
+                            : count === 12
+                            ? 'Semi-Graphic'
+                            : count === 15
+                            ? '2/3-Octave'
+                            : count === 20
+                            ? 'Mastering'
+                            : '1/3-ISO Graphic'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Curve Transformation & Utility Toolbar */}
+              <div className="p-3.5 rounded-2xl bg-[#061215] border border-[#15343d] flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-mono uppercase text-[#789d9a] px-1 font-bold">
+                    Curve Tools:
+                  </span>
+
                   <button
-                    onClick={() =>
-                      onUpdateSettings((prev) => ({
-                        ...prev,
-                        eq: { ...prev.eq, enabled: !prev.eq.enabled },
-                      }))
-                    }
-                    className={`w-12 h-6 rounded-full p-1 transition-colors flex items-center cursor-pointer ${
-                      settings.eq.enabled ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
-                    }`}
+                    onClick={() => handleTransform('flatten')}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#0a1e24] hover:bg-[#143e47] border border-[#193d47] text-[11px] font-mono text-zinc-300 hover:text-white transition cursor-pointer flex items-center gap-1"
+                    title="Reset all band gains to 0 dB"
                   >
-                    <div
-                      className={`w-4 h-4 rounded-full transition-transform ${
-                        settings.eq.enabled ? 'translate-x-6 bg-[#051a20]' : 'bg-[#789d9a]'
-                      }`}
-                    />
+                    <RotateCcw size={12} />
+                    <span>Flatten (0dB)</span>
                   </button>
+
+                  <button
+                    onClick={() => handleTransform('invert')}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#0a1e24] hover:bg-[#143e47] border border-[#193d47] text-[11px] font-mono text-zinc-300 hover:text-white transition cursor-pointer flex items-center gap-1"
+                    title="Invert current frequency curve (+ to -)"
+                  >
+                    <Shuffle size={12} />
+                    <span>Invert</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleTransform('smooth')}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#0a1e24] hover:bg-[#143e47] border border-[#193d47] text-[11px] font-mono text-zinc-300 hover:text-white transition cursor-pointer flex items-center gap-1"
+                    title="Gaussian smooth adjacent band gains"
+                  >
+                    <Wand2 size={12} />
+                    <span>Smooth</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleTransform('bass-tilt')}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#0a1e24] hover:bg-[#143e47] border border-[#193d47] text-[11px] font-mono text-zinc-300 hover:text-white transition cursor-pointer flex items-center gap-1"
+                    title="Warm bass tilt slope"
+                  >
+                    <TrendingUp size={12} />
+                    <span>Bass Tilt</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleTransform('treble-tilt')}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#0a1e24] hover:bg-[#143e47] border border-[#193d47] text-[11px] font-mono text-zinc-300 hover:text-white transition cursor-pointer flex items-center gap-1"
+                    title="Bright treble tilt slope"
+                  >
+                    <TrendingDown size={12} />
+                    <span>Treble Tilt</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleTransform('boost-3db')}
+                    className="px-2 py-1.5 rounded-lg bg-[#0a1e24] hover:bg-[#143e47] border border-[#193d47] text-[11px] font-mono text-cyan-300 hover:text-white transition cursor-pointer"
+                    title="Boost all bands by +3dB"
+                  >
+                    +3dB All
+                  </button>
+
+                  <button
+                    onClick={() => handleTransform('cut-3db')}
+                    className="px-2 py-1.5 rounded-lg bg-[#0a1e24] hover:bg-[#143e47] border border-[#193d47] text-[11px] font-mono text-amber-300 hover:text-white transition cursor-pointer"
+                    title="Cut all bands by -3dB"
+                  >
+                    -3dB All
+                  </button>
+                </div>
+
+                {/* Pre-Amp Gain & Auto Gain Toggle */}
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() =>
+                        onUpdateSettings((prev) => ({
+                          ...prev,
+                          eq: { ...prev.eq, autoGainCompensation: !prev.eq.autoGainCompensation },
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        settings.eq.autoGainCompensation
+                          ? 'bg-emerald-500/20 text-[#34d399] border border-emerald-500/40'
+                          : 'bg-[#0a1e24] text-zinc-400 border border-[#193d47]'
+                      }`}
+                    >
+                      <Sparkles size={11} />
+                      <span>Auto-Gain Loudness Comp</span>
+                    </button>
+                  </div>
+
+                  {/* PreAmp Slider */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-[#789d9a]">Pre-Amp:</span>
+                    <input
+                      type="range"
+                      min="-12"
+                      max="12"
+                      step="0.5"
+                      value={settings.eq.preAmpGain ?? 0}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        onUpdateSettings((prev) => ({
+                          ...prev,
+                          eq: { ...prev.eq, preAmpGain: val },
+                        }));
+                      }}
+                      className="w-20 accent-[#48e4ff] cursor-pointer"
+                    />
+                    <span className="text-[11px] font-mono text-[#48e4ff] font-bold w-12 text-right">
+                      {(settings.eq.preAmpGain ?? 0) > 0 ? `+${settings.eq.preAmpGain}` : settings.eq.preAmpGain ?? 0}dB
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Dynamic Interactive Slider Deck for the Active Band Count */}
+              <div className="p-4 md:p-5 rounded-2xl bg-[#061215] border border-[#15343d]">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <SlidersHorizontal size={14} className="text-[#48e4ff]" />
+                    <span>{activeBandCount}-Band Slider Deck (±12 dB Precision Range)</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-[#789d9a]">
+                    Click dB badge to zero band
+                  </span>
+                </div>
+
+                {/* Adaptive Scroll / Flex Slider Grid */}
+                <div
+                  className={`flex gap-2.5 overflow-x-auto pb-3 pt-2 ${
+                    activeBandCount <= 7 ? 'justify-around' : 'justify-start'
+                  }`}
+                >
+                  {currentBandDefs.map((band, idx) => {
+                    const val = currentGains[idx] ?? 0;
+                    const isBoost = val > 0;
+                    const isCut = val < 0;
+
+                    return (
+                      <div
+                        key={`${activeBandCount}-${band.index}-${band.freq}`}
+                        className={`p-3 rounded-xl bg-[#081b20] border border-[#193e48] flex flex-col items-center text-center relative group shrink-0 ${
+                          activeBandCount >= 20 ? 'min-w-[56px] w-[56px]' : activeBandCount >= 12 ? 'min-w-[64px] w-[64px]' : 'flex-1 min-w-[72px]'
+                        }`}
+                      >
+                        {/* Frequency Header */}
+                        <span className="text-[11px] font-mono text-[#48e4ff] font-bold truncate w-full">
+                          {band.freqLabel}
+                        </span>
+                        <span className="text-[9px] font-mono text-[#789d9a] truncate w-full mb-4">
+                          {band.label}
+                        </span>
+
+                        {/* Vertical Slider */}
+                        <div className="h-36 flex items-center justify-center my-3 relative">
+                          {/* Center Zero Line Indicator */}
+                          <div className="absolute w-full h-[1px] bg-cyan-500/20 top-1/2 pointer-events-none" />
+
+                          <input
+                            type="range"
+                            min="-12"
+                            max="12"
+                            step="0.2"
+                            disabled={!settings.eq.enabled}
+                            value={val}
+                            onChange={(e) => {
+                              handleBandGainChange(idx, parseFloat(e.target.value));
+                            }}
+                            className="w-36 -rotate-90 accent-[#48e4ff] cursor-pointer disabled:opacity-30"
+                          />
+                        </div>
+
+                        {/* Interactive dB readout badge (click to zero) */}
+                        <button
+                          onClick={() => handleBandGainChange(idx, 0)}
+                          disabled={!settings.eq.enabled}
+                          className={`mt-2 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border transition-colors cursor-pointer w-full truncate ${
+                            isBoost
+                              ? 'bg-cyan-950/80 border-cyan-700 text-[#48e4ff]'
+                              : isCut
+                              ? 'bg-amber-950/80 border-amber-700 text-amber-300'
+                              : 'bg-[#040e11] border-[#14323a] text-zinc-400'
+                          }`}
+                          title="Click to reset to 0 dB"
+                        >
+                          {val > 0 ? `+${val}` : val} dB
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Master Presets Browser & Filter */}
+              <div className="p-5 rounded-2xl bg-[#07171a] border border-[#173a43] space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-xs font-bold text-white">
-                      {settings.eq.enabled ? '5-Band DSP Active' : 'DSP Bypass Mode'}
-                    </div>
-                    <div className="text-[10px] font-mono text-[#789d9a]">
-                      {settings.eq.enabled ? 'Hardware biquad filter nodes engaged' : 'Clean direct feed'}
-                    </div>
+                    <h3 className="text-xs font-bold text-white flex items-center gap-2">
+                      <Sparkles size={14} className="text-[#48e4ff]" />
+                      <span>Pro Mastering & Acoustic EQ Presets (Continuous Interpolation)</span>
+                    </h3>
+                    <p className="text-[11px] text-[#789d9a] mt-0.5">
+                      Curves mathematically project to {activeBandCount} bands in real time.
+                    </p>
+                  </div>
+
+                  {/* Category Pills */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto">
+                    {['All', 'Mastering', 'Electronic', 'Acoustic', 'Vocal', 'Special'].map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setPresetCategory(cat)}
+                        className={`px-3 py-1 rounded-lg text-[10px] font-mono font-bold transition cursor-pointer ${
+                          presetCategory === cat
+                            ? 'bg-[#48e4ff] text-[#051a20]'
+                            : 'bg-[#0a1e24] text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                {/* Quick Audition Test Tone Generators */}
-                <div className="flex items-center gap-1.5 bg-[#091f24] p-1.5 rounded-xl border border-[#183d47]">
-                  <span className="text-[10px] font-mono text-[#789d9a] px-2">Audition Tone:</span>
-                  <button
-                    onClick={() => handleTestTone(60, 'sine', '60hz')}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-mono transition ${
-                      isPlayingTestTone === '60hz'
-                        ? 'bg-[#48e4ff] text-black font-bold'
-                        : 'bg-[#0e272e] text-zinc-300 hover:text-white'
-                    }`}
-                  >
-                    60Hz Sub
-                  </button>
-                  <button
-                    onClick={() => handleTestTone(440, 'sine', '440hz')}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-mono transition ${
-                      isPlayingTestTone === '440hz'
-                        ? 'bg-[#48e4ff] text-black font-bold'
-                        : 'bg-[#0e272e] text-zinc-300 hover:text-white'
-                    }`}
-                  >
-                    440Hz Concert
-                  </button>
-                  <button
-                    onClick={() => handleTestTone(1000, 'triangle', '1khz')}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-mono transition ${
-                      isPlayingTestTone === '1khz'
-                        ? 'bg-[#48e4ff] text-black font-bold'
-                        : 'bg-[#0e272e] text-zinc-300 hover:text-white'
-                    }`}
-                  >
-                    1kHz Mid
-                  </button>
+                {/* Preset Cards Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
+                  {filteredPresets.map(([pKey, p]) => {
+                    const isCurrent = settings.eq.activePreset === pKey;
+                    return (
+                      <button
+                        key={pKey}
+                        onClick={() => handleApplyPreset(pKey)}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer group flex flex-col justify-between ${
+                          isCurrent
+                            ? 'bg-[#12363f] border-[#48e4ff] text-white shadow-md shadow-cyan-500/20'
+                            : 'bg-[#08181c] hover:bg-[#0f2e36] border-[#163840] hover:border-[#48e4ff]/40 text-[#8aaeb5]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-bold text-white group-hover:text-[#48e4ff] truncate">
+                            {p.name}
+                          </span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#040e11] text-[#48e4ff] border border-cyan-900">
+                            {p.category}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-[#789d9a] line-clamp-2">{p.description}</p>
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
-
-              {/* Presets Selector Grid */}
-              <div>
-                <div className="text-xs font-bold text-white mb-2.5 flex items-center justify-between">
-                  <span>Pro Studio EQ Presets</span>
-                  <span className="text-[11px] font-mono text-[#789d9a]">Click preset to load curve</span>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  {Object.entries(eqPresets).map(([pName, p]) => (
-                    <button
-                      key={pName}
-                      onClick={() => applyPreset(pName)}
-                      className="p-3 rounded-xl bg-[#08181c] hover:bg-[#0f2e36] border border-[#163840] hover:border-[#48e4ff]/50 text-left transition-all cursor-pointer group"
-                    >
-                      <div className="text-xs font-bold text-white group-hover:text-[#48e4ff] truncate">
-                        {pName}
-                      </div>
-                      <div className="text-[10px] text-[#789d9a] truncate mt-0.5">{p.desc}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 5-Band Slider Deck */}
-              <div className="grid grid-cols-5 gap-3 p-5 rounded-2xl bg-[#061215] border border-[#15343d]">
-                {[
-                  { label: 'Sub-Bass', freq: '60 Hz', type: 'Low Shelf', key: 'bass' as const },
-                  { label: 'Low-Mid', freq: '250 Hz', type: 'Peaking', key: 'lowMid' as const },
-                  { label: 'Vocal / Mid', freq: '1.0 kHz', type: 'Peaking', key: 'vocal' as const },
-                  { label: 'High-Mid', freq: '4.0 kHz', type: 'Peaking', key: 'highMid' as const },
-                  { label: 'Treble Air', freq: '12.0 kHz', type: 'High Shelf', key: 'treble' as const },
-                ].map((band) => {
-                  const val = settings.eq[band.key];
-                  return (
-                    <div
-                      key={band.label}
-                      className="p-4 rounded-xl bg-[#081b20] border border-[#193e48] flex flex-col items-center text-center relative group"
-                    >
-                      <span className="text-xs font-bold text-white mb-0.5">{band.label}</span>
-                      <span className="text-[10px] font-mono text-[#48e4ff] font-bold">{band.freq}</span>
-                      <span className="text-[9px] font-mono text-zinc-500 mb-6">{band.type}</span>
-
-                      {/* Vertical Slider */}
-                      <div className="h-32 flex items-center justify-center my-4">
-                        <input
-                          type="range"
-                          min="-12"
-                          max="12"
-                          step="0.5"
-                          disabled={!settings.eq.enabled}
-                          value={val}
-                          onChange={(e) => {
-                            const newVal = parseFloat(e.target.value);
-                            onUpdateSettings((prev) => ({
-                              ...prev,
-                              eq: { ...prev.eq, [band.key]: newVal },
-                            }));
-                          }}
-                          className="w-32 -rotate-90 accent-[#48e4ff] cursor-pointer disabled:opacity-30"
-                        />
-                      </div>
-
-                      <div className="mt-2 text-xs font-mono font-bold px-2 py-1 rounded bg-[#040e11] border border-[#14323a] text-[#48e4ff] min-w-[50px]">
-                        {val > 0 ? `+${val}` : val} dB
-                      </div>
-                    </div>
-                  );
-                })}
               </div>
             </div>
           )}
 
-          {/* TAB 2: SPATIAL ACOUSTICS */}
+          {/* TAB 2: SPATIAL ACOUSTICS & 3D SOUNDSTAGE */}
           {activeTab === 'spatial' && (
-            <div className="space-y-6">
-              <div className="p-5 rounded-2xl bg-[#061215] border border-[#15343d] space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Spatial Soundstage Mode</h3>
-                    <p className="text-xs text-[#789d9a] mt-0.5">
-                      Binaural psychoacoustic stereo expansion and virtual venue positioning.
-                    </p>
-                  </div>
+            <div className="space-y-5">
+              <div className="p-5 rounded-2xl bg-[#061215] border border-[#15343d] space-y-5">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Compass size={16} className="text-[#48e4ff]" />
+                    <span>Spatial Acoustics & Binaural 3D Soundstage</span>
+                  </h3>
+                  <p className="text-xs text-[#789d9a] mt-0.5">
+                    Psychoacoustic stereo field widening, binaural room reflections, and virtual venue acoustics.
+                  </p>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                  {(['off', 'studio', 'wide', 'immersive', 'cinema'] as SpatialMode[]).map((mode) => (
-                    <button
-                      key={mode}
-                      onClick={() =>
-                        onUpdateSettings((prev) => ({
-                          ...prev,
-                          spatial: { ...prev.spatial, mode },
-                        }))
-                      }
-                      className={`p-3.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                        settings.spatial.mode === mode
-                          ? 'bg-[#48e4ff] text-black shadow-md shadow-cyan-500/20'
-                          : 'bg-[#081a1e] text-zinc-300 hover:bg-[#0f2e36] border border-[#183d47]'
-                      }`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
+                {/* Spatial Mode Selector Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+                  {[
+                    { id: 'off', label: 'Bypass (Off)', desc: 'Standard Direct Stereo' },
+                    { id: 'studio', label: 'Studio Room', desc: 'Acoustically Treated' },
+                    { id: 'wide', label: 'Ultra-Wide', desc: 'Expanded Pan Field' },
+                    { id: 'immersive', label: 'Immersive 3D', desc: 'Binaural Surround' },
+                    { id: 'cinema', label: 'Cinema Hall', desc: 'Deep Spatial Scale' },
+                    { id: 'hall', label: 'Symphony Hall', desc: 'Grand Reverb Tail' },
+                    { id: 'club', label: 'Binaural Club', desc: 'Sub & Venues Pan' },
+                  ].map((m) => {
+                    const isSelected = settings.spatial.mode === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() =>
+                          onUpdateSettings((prev) => ({
+                            ...prev,
+                            spatial: { ...prev.spatial, mode: m.id as SpatialMode },
+                          }))
+                        }
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#48e4ff] text-[#051a20] border-cyan-300 shadow-md shadow-cyan-500/25'
+                            : 'bg-[#081a1e] text-zinc-300 hover:bg-[#0f2e36] border-[#183d47]'
+                        }`}
+                      >
+                        <div className="text-xs font-bold uppercase truncate">{m.label}</div>
+                        <div className={`text-[10px] truncate mt-0.5 ${isSelected ? 'text-[#06242b]' : 'text-[#789d9a]'}`}>
+                          {m.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
 
+                {/* Stereo Width Slider */}
                 <div className="space-y-2 pt-4 border-t border-[#133139]">
                   <div className="flex items-center justify-between text-xs text-white">
-                    <span>Stereo Width Multiplier:</span>
+                    <span className="font-bold">Stereo Width Multiplier:</span>
                     <span className="font-mono text-[#48e4ff] font-bold">
                       {settings.spatial.stereoWidth}%
                     </span>
@@ -479,24 +1023,52 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     className="w-full accent-[#48e4ff] cursor-pointer"
                   />
                   <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                    <span>0% (Pure Mono)</span>
+                    <span>0% (Mono Collapsed)</span>
                     <span>100% (Standard Stereo)</span>
-                    <span>200% (Ultra-Wide Cinema)</span>
+                    <span>200% (Ultra-Wide Psychoacoustic)</span>
                   </div>
+                </div>
+
+                {/* Ambient Reverb Wetness Slider */}
+                <div className="space-y-2 pt-3 border-t border-[#133139]">
+                  <div className="flex items-center justify-between text-xs text-white">
+                    <span className="font-bold">Acoustic Room Wetness:</span>
+                    <span className="font-mono text-[#34d399] font-bold">
+                      {Math.round((settings.spatial.reverbWet ?? 0.1) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={settings.spatial.reverbWet ?? 0.1}
+                    onChange={(e) => {
+                      const rw = parseFloat(e.target.value);
+                      onUpdateSettings((prev) => ({
+                        ...prev,
+                        spatial: { ...prev.spatial, reverbWet: rw },
+                      }));
+                    }}
+                    className="w-full accent-[#34d399] cursor-pointer"
+                  />
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 3: DYNAMICS COMPRESSOR */}
+          {/* TAB 3: DYNAMICS COMPRESSOR & PEAK LIMITER */}
           {activeTab === 'compressor' && (
-            <div className="space-y-6">
+            <div className="space-y-5">
               <div className="p-5 rounded-2xl bg-[#061215] border border-[#15343d] space-y-5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-bold text-white">Hardware Dynamics Compressor</h3>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Activity size={16} className="text-[#48e4ff]" />
+                      <span>Hardware Dynamics Compressor & Peak Limiter</span>
+                    </h3>
                     <p className="text-xs text-[#789d9a] mt-0.5">
-                      Smooth peaks and prevent harmonic distortion during aggressive EQ boosts.
+                      Smooth dynamic peaks, tighten punch, and prevent harmonic clipping during aggressive EQ boosts.
                     </p>
                   </div>
                   <button
@@ -518,17 +1090,34 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                   </button>
                 </div>
 
+                {/* Real-time Gain Reduction Meter */}
+                <div className="p-4 rounded-xl bg-[#040d10] border border-[#122e36] space-y-2">
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-[#789d9a]">Real-Time Gain Reduction (GR):</span>
+                    <span className={`font-bold ${gainReductionDb < 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {gainReductionDb < 0 ? `${gainReductionDb} dB` : '0.0 dB (Clean Headroom)'}
+                    </span>
+                  </div>
+                  <div className="w-full h-3 rounded-full bg-[#081b20] overflow-hidden p-0.5 border border-[#163842]">
+                    <div
+                      className="h-full bg-gradient-to-r from-emerald-400 via-amber-400 to-rose-500 rounded-full transition-all duration-75"
+                      style={{ width: `${Math.min(100, Math.abs(gainReductionDb) * 5)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Controls Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 rounded-xl bg-[#081b20] border border-[#183d47] space-y-2">
-                    <div className="flex items-center justify-between text-xs text-white">
+                    <div className="flex items-center justify-between text-xs text-white font-bold">
                       <span>Threshold Level:</span>
-                      <span className="font-mono text-[#48e4ff] font-bold">
+                      <span className="font-mono text-[#48e4ff]">
                         {settings.compressor.threshold} dB
                       </span>
                     </div>
                     <input
                       type="range"
-                      min="-40"
+                      min="-50"
                       max="0"
                       step="1"
                       disabled={!settings.compressor.enabled}
@@ -545,9 +1134,9 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                   </div>
 
                   <div className="p-4 rounded-xl bg-[#081b20] border border-[#183d47] space-y-2">
-                    <div className="flex items-center justify-between text-xs text-white">
+                    <div className="flex items-center justify-between text-xs text-white font-bold">
                       <span>Compression Ratio:</span>
-                      <span className="font-mono text-[#48e4ff] font-bold">
+                      <span className="font-mono text-[#48e4ff]">
                         {settings.compressor.ratio}:1
                       </span>
                     </div>
@@ -555,11 +1144,11 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                       type="range"
                       min="1"
                       max="20"
-                      step="1"
+                      step="0.5"
                       disabled={!settings.compressor.enabled}
                       value={settings.compressor.ratio}
                       onChange={(e) => {
-                        const r = parseInt(e.target.value);
+                        const r = parseFloat(e.target.value);
                         onUpdateSettings((prev) => ({
                           ...prev,
                           compressor: { ...prev.compressor, ratio: r },
@@ -572,32 +1161,151 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* TAB 4: RTA SPECTRUM DIAGNOSTICS & AUDITION SIGNALS */}
+          {activeTab === 'analyzer' && (
+            <div className="space-y-5">
+              <div className="p-5 rounded-2xl bg-[#061215] border border-[#15343d] space-y-5">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <BarChart2 size={16} className="text-[#48e4ff]" />
+                    <span>Acoustic Calibration & Test Signal Generators</span>
+                  </h3>
+                  <p className="text-xs text-[#789d9a] mt-0.5">
+                    Generate pure reference sine tones, calibrated pink noise, or logarithmic sweeps to audition EQ response.
+                  </p>
+                </div>
+
+                {/* Signal Generator Buttons Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {[
+                    { id: 'sub-30', label: '30 Hz Sub', freq: 30, type: 'sine' as const },
+                    { id: 'sub-60', label: '60 Hz Bass', freq: 60, type: 'sine' as const },
+                    { id: 'kick-120', label: '120 Hz Kick', freq: 120, type: 'sine' as const },
+                    { id: 'concert-440', label: '440 Hz Concert A', freq: 440, type: 'sine' as const },
+                    { id: 'mid-1k', label: '1.0 kHz Mid', freq: 1000, type: 'sine' as const },
+                    { id: 'snap-4k', label: '4.0 kHz Snap', freq: 4000, type: 'sine' as const },
+                    { id: 'sheen-10k', label: '10.0 kHz Top', freq: 10000, type: 'sine' as const },
+                    { id: 'air-16k', label: '16.0 kHz Air', freq: 16000, type: 'sine' as const },
+                  ].map((sig) => {
+                    const isPlaying = playingTone === sig.id;
+                    return (
+                      <button
+                        key={sig.id}
+                        onClick={() => handleToggleTestTone(sig.id, sig.freq, sig.type)}
+                        className={`p-3 rounded-xl border text-center transition-all cursor-pointer font-mono text-xs ${
+                          isPlaying
+                            ? 'bg-[#48e4ff] text-[#051a20] font-bold border-cyan-300 shadow-md shadow-cyan-500/25'
+                            : 'bg-[#081a1e] text-zinc-300 hover:bg-[#0f2e36] border-[#183d47]'
+                        }`}
+                      >
+                        <div className="font-bold">{sig.label}</div>
+                        <div className={`text-[10px] ${isPlaying ? 'text-[#06242b]' : 'text-[#789d9a]'}`}>
+                          {isPlaying ? 'Active Playing' : 'Audition Sine'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Noise & Sweep Generators */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-[#133139]">
+                  <button
+                    onClick={() => handleToggleTestTone('pink-noise')}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                      playingTone === 'pink-noise'
+                        ? 'bg-[#34d399] text-[#051a20] font-bold border-emerald-300'
+                        : 'bg-[#081a1e] text-zinc-300 hover:bg-[#0f2e36] border-[#183d47]'
+                    }`}
+                  >
+                    <div>
+                      <div className="text-xs font-bold">Calibrated Pink Noise (1/f)</div>
+                      <div className={`text-[10px] ${playingTone === 'pink-noise' ? 'text-[#051a20]' : 'text-[#789d9a]'}`}>
+                        Flat energy per octave for room tuning
+                      </div>
+                    </div>
+                    {playingTone === 'pink-noise' ? <Pause size={18} /> : <Play size={18} />}
+                  </button>
+
+                  <button
+                    onClick={() => handleToggleTestTone('sweep')}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                      playingTone === 'sweep'
+                        ? 'bg-[#38bdf8] text-[#051a20] font-bold border-sky-300'
+                        : 'bg-[#081a1e] text-zinc-300 hover:bg-[#0f2e36] border-[#183d47]'
+                    }`}
+                  >
+                    <div>
+                      <div className="text-xs font-bold">Logarithmic Sine Sweep (20Hz - 20kHz)</div>
+                      <div className={`text-[10px] ${playingTone === 'sweep' ? 'text-[#051a20]' : 'text-[#789d9a]'}`}>
+                        Full audio spectrum frequency sweep
+                      </div>
+                    </div>
+                    {playingTone === 'sweep' ? <Pause size={18} /> : <Play size={18} />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
+        {/* Import Preset Modal Dialog */}
+        {showImportDialog && (
+          <div className="absolute inset-0 bg-black/85 backdrop-blur-sm z-30 flex items-center justify-center p-6">
+            <div className="bg-[#08181c] border border-[#234b54] p-6 rounded-2xl w-full max-w-lg space-y-4">
+              <h4 className="text-sm font-bold text-white">Import Custom EQ Preset (JSON)</h4>
+              <p className="text-xs text-[#789d9a]">
+                Paste your exported Spotui EQ configuration JSON below:
+              </p>
+              <textarea
+                value={importJsonText}
+                onChange={(e) => setImportJsonText(e.target.value)}
+                placeholder='{"name": "My Custom Curve", "bandCount": 10, "gains": [2, 1, 0, ...]}'
+                className="w-full h-36 bg-[#040e11] border border-[#15343d] rounded-xl p-3 font-mono text-xs text-cyan-300 focus:outline-none focus:border-cyan-400"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowImportDialog(false)}
+                  className="px-4 py-2 rounded-xl text-xs text-zinc-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleImportEQ}
+                  className="px-4 py-2 bg-[#48e4ff] text-[#051a20] font-bold rounded-xl text-xs"
+                >
+                  Load Preset
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Modal Footer Controls */}
-        <div className="mt-5 pt-4 border-t border-[#183942] flex flex-wrap items-center justify-between gap-3 relative z-10">
-          <div className="flex items-center gap-2">
+        <div className="mt-4 pt-3 border-t border-[#183942] flex flex-wrap items-center justify-between gap-3 relative z-10 shrink-0">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() =>
-                onUpdateSettings((prev) => ({
-                  ...prev,
-                  eq: { enabled: true, bass: 0, lowMid: 0, vocal: 0, highMid: 0, treble: 0 },
-                  spatial: { mode: 'off', stereoWidth: 100, reverbWet: 0 },
-                  compressor: { enabled: true, threshold: -12, ratio: 4 },
-                }))
-              }
-              className="px-3.5 py-2 rounded-xl bg-[#0e242a] hover:bg-[#143e47] text-xs text-zinc-300 hover:text-white border border-[#1d3c45] transition flex items-center gap-1.5 cursor-pointer"
+              onClick={() => handleTransform('flatten')}
+              className="px-3 py-2 rounded-xl bg-[#0e242a] hover:bg-[#143e47] text-xs text-zinc-300 hover:text-white border border-[#1d3c45] transition flex items-center gap-1.5 cursor-pointer"
             >
-              <RotateCcw size={14} />
-              <span>Reset Curve to Flat</span>
+              <RotateCcw size={13} />
+              <span>Reset Curve</span>
             </button>
 
             <button
               onClick={handleExportEQ}
-              className="px-3.5 py-2 rounded-xl bg-[#0e242a] hover:bg-[#143e47] text-xs text-cyan-300 hover:text-white border border-[#1d3c45] transition flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-2 rounded-xl bg-[#0e242a] hover:bg-[#143e47] text-xs text-cyan-300 hover:text-white border border-[#1d3c45] transition flex items-center gap-1.5 cursor-pointer"
             >
-              <Sparkles size={14} />
-              <span>{copiedPreset ? 'Copied to Clipboard!' : 'Export Preset'}</span>
+              <Copy size={13} />
+              <span>{copiedStatus || 'Export JSON'}</span>
+            </button>
+
+            <button
+              onClick={() => setShowImportDialog(true)}
+              className="px-3 py-2 rounded-xl bg-[#0e242a] hover:bg-[#143e47] text-xs text-zinc-300 hover:text-white border border-[#1d3c45] transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Upload size={13} />
+              <span>Import JSON</span>
             </button>
           </div>
 

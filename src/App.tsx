@@ -111,6 +111,15 @@ const STARTER_TRACKS: Track[] = [
 const defaultSettings: AppSettings = {
   eq: {
     enabled: true,
+    bandCount: 5,
+    gains: [2, 0, 1, 2, 3],
+    modeGains: {
+      5: [2, 0, 1, 2, 3],
+    },
+    preAmpGain: 0,
+    autoGainCompensation: true,
+    activePreset: 'Balanced Studio',
+    qFactorMultiplier: 1.0,
     bass: 2,
     lowMid: 0,
     vocal: 1,
@@ -1127,6 +1136,7 @@ export default function App() {
                 settings={settings}
                 onUpdateSettings={setSettings}
                 onWipeVault={handleWipeVault}
+                onOpenDsp={() => setShowDspModal(true)}
               />
             </div>
           )}

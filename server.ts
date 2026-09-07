@@ -985,91 +985,98 @@ async function startServer() {
   }
 
   // Range-aware stream proxy pipeline
-async function pipeMediaStream(
-  targetUrl: string,
-  req: express.Request,
-  res: express.Response,
-  defaultContentType: string
-): Promise<boolean> {
-  const range = req.headers.range;
-  const upstreamHeaders: Record<string, string> = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept-Encoding": "identity", 
-  };
+  async function pipeMediaStream(
+    targetUrl: string,
+    req: express.Request,
+    res: express.Response,
+    defaultContentType: string,
+    isFinal: boolean = false
+  ): Promise<boolean> {
+    const range = req.headers.range;
+    const upstreamHeaders: Record<string, string> = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept-Encoding": "identity",
+      "Referer": "https://www.youtube.com/",
+    };
 
-  if (range) {
-    upstreamHeaders["Range"] = range;
-  }
+    if (range) {
+      upstreamHeaders["Range"] = range;
+    }
 
-  const abortController = new AbortController();
-  req.on("close", () => abortController.abort());
+    const abortController = new AbortController();
+    req.on("close", () => abortController.abort());
 
-  try {
-    const upstream = await fetch(targetUrl, { 
-      headers: upstreamHeaders,
-      signal: abortController.signal 
-    });
+    try {
+      const upstream = await fetch(targetUrl, { 
+        headers: upstreamHeaders,
+        signal: abortController.signal 
+      });
 
-    if (!upstream.ok) {
-      console.warn(`[pipeMediaStream] Upstream error status ${upstream.status} for URL: ${targetUrl}`);
-      if (!res.headersSent) {
-        res.status(upstream.status).end();
+      if (!upstream.ok) {
+        console.warn(`[pipeMediaStream] Upstream returned status ${upstream.status} for URL: ${targetUrl.slice(0, 80)}...`);
+        if (isFinal && !res.headersSent) {
+          res.status(upstream.status).end();
+        }
+        return false;
+      }
+
+      res.status(upstream.status);
+
+      const headersToForward = [
+        "content-range",
+        "accept-ranges",
+        "content-length",
+        "content-type",
+        "cache-control",
+      ];
+
+      for (const h of headersToForward) {
+        const val = upstream.headers.get(h);
+        if (val) {
+          res.setHeader(h, val);
+        }
+      }
+
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "*");
+      res.setHeader("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, Content-Type");
+
+      if (!res.getHeader("content-type")) {
+        res.setHeader("Content-Type", defaultContentType);
+      }
+
+      if (!res.getHeader("accept-ranges")) {
+        res.setHeader("Accept-Ranges", "bytes");
+      }
+
+      if (!upstream.body) {
+        res.end();
+        return true;
+      }
+
+      const { Readable } = await import("stream");
+      const nodeStream = Readable.fromWeb(upstream.body as any);
+      
+      nodeStream.pipe(res);
+
+      nodeStream.on("error", (streamErr) => {
+        console.error("[pipeMediaStream] Stream error:", streamErr);
+        res.end();
+      });
+
+      return true;
+    } catch (err: any) {
+      if (err.name === "AbortError") {
+        return true;
+      }
+      console.warn("[pipeMediaStream] Pipe fetch failed:", err.message);
+      if (isFinal && !res.headersSent) {
+        res.status(502).end();
       }
       return false;
     }
-
-    res.status(upstream.status);
-
-    const headersToForward = [
-      "content-range",
-      "accept-ranges",
-      "content-length",
-      "content-type",
-      "cache-control",
-    ];
-
-    for (const h of headersToForward) {
-      const val = upstream.headers.get(h);
-      if (val) {
-        res.setHeader(h, val);
-      }
-    }
-
-    if (!res.getHeader("content-type")) {
-      res.setHeader("Content-Type", defaultContentType);
-    }
-
-    if (!res.getHeader("accept-ranges")) {
-      res.setHeader("Accept-Ranges", "bytes");
-    }
-
-    if (!upstream.body) {
-      res.end();
-      return true;
-    }
-
-    const { Readable } = await import("stream");
-    const nodeStream = Readable.fromWeb(upstream.body as any);
-    
-    nodeStream.pipe(res);
-
-    nodeStream.on("error", (streamErr) => {
-      console.error("[pipeMediaStream] Stream error:", streamErr);
-      res.end();
-    });
-
-    return true;
-  } catch (err: any) {
-    if (err.name === "AbortError") {
-      return true;
-    }
-    console.warn("[pipeMediaStream] Pipe fetch failed:", err.message);
-    if (!res.headersSent) {
-      res.status(502).end();
-    }
-    return false;
   }
-}
 
   // Real Audio Streaming Endpoint (Fixes YouTube Music Player & Decks with Multi-Source Fallbacks)
   app.get("/api/audio/stream", async (req, res) => {
@@ -1098,16 +1105,40 @@ async function pipeMediaStream(
       }
     }
 
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, Content-Type");
+
     try {
-      // 1. Try Innertube decipher if initialized
+      // 1. Try Innertube direct download WebStream
       if (yt) {
+        try {
+          const webStream = await (yt as any).download(videoId, {
+            type: "audio",
+            quality: "best",
+          });
+          if (webStream) {
+            res.setHeader("Content-Type", "audio/webm; codecs=opus");
+            res.setHeader("Accept-Ranges", "bytes");
+            const { Readable } = await import("stream");
+            const nodeStream = Readable.fromWeb(webStream as any);
+            nodeStream.pipe(res);
+            nodeStream.on("error", () => res.end());
+            return;
+          }
+        } catch (innerErr: any) {
+          console.warn("[Innertube direct download fallback to decipher/nodes]:", innerErr?.message);
+        }
+
+        // 1b. Try Innertube decipher format
         try {
           const info = await yt.getInfo(videoId);
           const format = info.chooseFormat({ type: "audio", quality: "best" });
           if (format && format.decipher) {
             const deciphered = await format.decipher(yt.session.player);
             if (deciphered) {
-              const success = await pipeMediaStream(deciphered, req, res, format.mime_type || "audio/webm; codecs=opus");
+              const success = await pipeMediaStream(deciphered, req, res, format.mime_type || "audio/webm; codecs=opus", false);
               if (success) return;
             }
           }
@@ -1125,12 +1156,14 @@ async function pipeMediaStream(
         "https://invidious.private.coffee",
         "https://vid.priv.au",
         "https://inv.nadeko.net",
+        "https://invidious.drgns.space",
+        "https://yt.artemislena.eu",
       ];
 
       for (const node of invidiousStreamNodesList) {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 2500);
+          const timeout = setTimeout(() => controller.abort(), 3000);
           const response = await fetch(`${node}/api/v1/videos/${videoId}`, { signal: controller.signal });
           clearTimeout(timeout);
 
@@ -1146,7 +1179,7 @@ async function pipeMediaStream(
 
             if (best && best.url) {
               const fullUrl = best.url.startsWith("http") ? best.url : `${node}${best.url}`;
-              const success = await pipeMediaStream(fullUrl, req, res, best.type || "audio/webm; codecs=opus");
+              const success = await pipeMediaStream(fullUrl, req, res, best.type || "audio/webm; codecs=opus", false);
               if (success) return;
             }
           }
@@ -1161,12 +1194,13 @@ async function pipeMediaStream(
         "https://pipedapi.adminforge.de",
         "https://pipedapi.astral.site",
         "https://pipedapi.lvk.li",
+        "https://api.piped.privacydev.net",
       ];
 
       for (const node of pipedStreamNodesList) {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 2500);
+          const timeout = setTimeout(() => controller.abort(), 3000);
           const response = await fetch(`${node}/streams/${videoId}`, { signal: controller.signal });
           clearTimeout(timeout);
 
@@ -1174,7 +1208,7 @@ async function pipeMediaStream(
             const data = await response.json();
             if (data.audioStreams && data.audioStreams.length > 0) {
               const bestAudio = data.audioStreams[0];
-              const success = await pipeMediaStream(bestAudio.url, req, res, bestAudio.mimeType || "audio/webm; codecs=opus");
+              const success = await pipeMediaStream(bestAudio.url, req, res, bestAudio.mimeType || "audio/webm; codecs=opus", false);
               if (success) return;
             }
           }
@@ -1184,9 +1218,9 @@ async function pipeMediaStream(
       }
 
       // 4. High quality emergency audio backup stream to avoid player crash
-      console.warn(`[Streaming Endpoint Error] All sources failed to stream ${videoId}. Playing high-fidelity emergency ambient sound.`);
+      console.warn(`[Streaming Endpoint Error] All sources failed to stream ${videoId}. Playing high-fidelity emergency stream.`);
       const fallbackAudio = "https://actions.google.com/sounds/v1/ambiences/humming_glacier.ogg";
-      await pipeMediaStream(fallbackAudio, req, res, "audio/ogg");
+      await pipeMediaStream(fallbackAudio, req, res, "audio/ogg", true);
     } catch (e: any) {
       if (!res.headersSent) {
         res.status(500).json({ error: "Stream error: " + e.message });

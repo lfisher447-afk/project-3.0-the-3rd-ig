@@ -17,23 +17,32 @@ import {
   Fingerprint,
   Bell,
   AlertTriangle,
+  Radio,
+  Music2,
+  Compass,
+  Activity,
+  Layers,
+  Sparkles,
 } from 'lucide-react';
-import { AppSettings, ThemePalette, VisualizerStyle } from '../types';
+import { AppSettings, EQBandCount, SpatialMode, ThemePalette, VisualizerStyle } from '../types';
 import { exportFullVault, getStorageMetrics } from '../lib/db';
 import { launchAboutBlankCloak, launchBlobCloak, CLOAK_PRESETS } from '../lib/security';
 import { PROXY_ENGINES, registerServiceWorkerProxy, initWSMWorker } from '../lib/wsm-proxy';
 import { requestBrowserNotificationPermission, checkSitePermissionsState, addNotification } from '../lib/notifications';
+import { SUPPORTED_BAND_COUNTS, BAND_CONFIGURATIONS } from '../lib/eqConfig';
 
 interface SettingsViewProps {
   settings: AppSettings;
   onUpdateSettings: (updater: (prev: AppSettings) => AppSettings) => void;
   onWipeVault: () => void;
+  onOpenDsp?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onUpdateSettings,
   onWipeVault,
+  onOpenDsp,
 }) => {
   const [activeSection, setActiveSection] = useState<'dsp' | 'security' | 'cloak' | 'theme' | 'storage' | 'vercel' | 'permissions'>('security');
   const [storageMetrics, setStorageMetrics] = useState({ usageMB: '0.00', quotaMB: 'Unlimited', percent: '0' });
@@ -445,6 +454,142 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Section 3: DSP & Playback Matrix */}
       {activeSection === 'dsp' && (
         <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Main DSP Studio Launcher Card */}
+          <div className="p-6 rounded-2xl bg-gradient-to-br from-[#07191e] via-[#09222a] to-[#051417] border border-[#48e4ff]/30 shadow-lg relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2 py-0.5 rounded-full bg-[#48e4ff]/20 text-[#48e4ff] text-[10px] font-mono font-bold uppercase border border-[#48e4ff]/30">
+                    Full Studio Pipeline
+                  </span>
+                  <span className="text-[10px] font-mono text-[#789d9a]">Web Audio 64-bit Core</span>
+                </div>
+                <h3 className="text-xl font-serif font-bold text-white mb-1 flex items-center gap-2">
+                  <Sliders size={20} className="text-[#48e4ff]" />
+                  <span>Master DSP & Multi-Band Parametric EQ Deck</span>
+                </h3>
+                <p className="text-xs text-[#8aaeb5] max-w-xl">
+                  Dynamic 5, 7, 10, 12, 15, 20, and 31-band studio graphic EQ, 6-mode spatial acoustic engine, tube dynamics compressor, and live 60 FPS RTA spectrum analyzer.
+                </p>
+              </div>
+
+              {onOpenDsp && (
+                <button
+                  onClick={onOpenDsp}
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#48e4ff] to-[#0284c7] text-[#02151b] font-bold text-xs shadow-[0_0_20px_rgba(72,228,255,0.3)] hover:brightness-110 active:scale-95 transition-all shrink-0"
+                >
+                  <Sparkles size={16} />
+                  <span>Open Studio DSP Deck</span>
+                </button>
+              )}
+            </div>
+
+            {/* Quick Summary Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-5 border-t border-[#143e47]/60">
+              <div className="p-3 rounded-xl bg-[#040f12]/80 border border-[#113138]">
+                <div className="text-[10px] uppercase font-mono text-[#789d9a]">EQ Engine</div>
+                <div className="text-sm font-bold text-white mt-0.5 flex items-center justify-between">
+                  <span>{settings.eq.enabled ? 'ACTIVE' : 'BYPASS'}</span>
+                  <span className="text-[10px] font-mono text-[#48e4ff]">{settings.eq.bandCount || 5} Bands</span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#040f12]/80 border border-[#113138]">
+                <div className="text-[10px] uppercase font-mono text-[#789d9a]">Spatial Acoustics</div>
+                <div className="text-sm font-bold text-white mt-0.5 flex items-center justify-between">
+                  <span className="capitalize">{settings.spatial.mode}</span>
+                  <span className="text-[10px] font-mono text-[#48e4ff]">{settings.spatial.stereoWidth}%</span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#040f12]/80 border border-[#113138]">
+                <div className="text-[10px] uppercase font-mono text-[#789d9a]">Dynamics Comp</div>
+                <div className="text-sm font-bold text-white mt-0.5 flex items-center justify-between">
+                  <span>{settings.compressor.enabled ? 'ACTIVE' : 'BYPASS'}</span>
+                  <span className="text-[10px] font-mono text-[#48e4ff]">{settings.compressor.threshold} dB</span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#040f12]/80 border border-[#113138]">
+                <div className="text-[10px] uppercase font-mono text-[#789d9a]">Auto Gain Trim</div>
+                <div className="text-sm font-bold text-white mt-0.5 flex items-center justify-between">
+                  <span>{settings.eq.autoGain ? 'ON' : 'OFF'}</span>
+                  <span className="text-[10px] font-mono text-[#48e4ff]">{settings.eq.preampGain ?? 0} dB</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Band Count Switcher */}
+          <div className="p-6 rounded-2xl bg-[#061013] border border-[#1a3840]">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Layers size={15} className="text-[#48e4ff]" />
+                  <span>Active Equalizer Band Topology</span>
+                </h4>
+                <p className="text-[11px] text-[#789d9a] mt-0.5">
+                  Select filter density from consumer 5-band to broadcast 31-band 1/3-octave ISO precision.
+                </p>
+              </div>
+              <button
+                onClick={() =>
+                  onUpdateSettings((prev) => ({
+                    ...prev,
+                    eq: { ...prev.eq, enabled: !prev.eq.enabled },
+                  }))
+                }
+                className={`px-3 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                  settings.eq.enabled
+                    ? 'bg-[#48e4ff]/20 text-[#48e4ff] border-[#48e4ff]/40'
+                    : 'bg-[#152e34] text-[#789d9a] border-[#1f424b]'
+                }`}
+              >
+                {settings.eq.enabled ? 'EQ ENABLED' : 'EQ BYPASSED'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+              {SUPPORTED_BAND_COUNTS.map((count) => {
+                const isCurrent = (settings.eq.bandCount || 5) === count;
+                return (
+                  <button
+                    key={count}
+                    onClick={() =>
+                      onUpdateSettings((prev) => ({
+                        ...prev,
+                        eq: { ...prev.eq, bandCount: count },
+                      }))
+                    }
+                    className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center border ${
+                      isCurrent
+                        ? 'bg-[#143e47] text-[#48e4ff] border-[#48e4ff] shadow-sm'
+                        : 'bg-[#08171b] text-[#789d9a] hover:text-white border-[#122b31] hover:border-[#204a54]'
+                    }`}
+                  >
+                    <div>{count} Bands</div>
+                    <div className="text-[9px] font-mono text-slate-400 mt-0.5">
+                      {count === 5
+                        ? 'Standard'
+                        : count === 7
+                        ? 'Car/HiFi'
+                        : count === 10
+                        ? '1-Octave'
+                        : count === 12
+                        ? 'Studio'
+                        : count === 15
+                        ? '2/3-Oct'
+                        : count === 20
+                        ? 'Mastering'
+                        : '1/3-Oct'}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Playback Transitions */}
           <div className="p-6 rounded-2xl bg-[#061013] border border-[#1a3840]">
             <h3 className="text-lg font-serif font-bold text-white mb-1">Playback Transitions & Audio Buffer</h3>
             <p className="text-xs text-[#789d9a] mb-6">

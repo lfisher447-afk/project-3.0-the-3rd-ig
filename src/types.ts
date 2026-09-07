@@ -28,6 +28,8 @@ export interface Playlist {
   isFavorite?: boolean;
 }
 
+export type EQBandCount = 5 | 7 | 10 | 12 | 15 | 20 | 31;
+
 export interface EQBand {
   id: string;
   label: string;
@@ -36,20 +38,30 @@ export interface EQBand {
   type: BiquadFilterType;
 }
 
-export type SpatialMode = 'off' | 'studio' | 'wide' | 'immersive' | 'cinema';
+export type SpatialMode = 'off' | 'studio' | 'wide' | 'immersive' | 'cinema' | 'hall' | 'club';
 export type VisualizerStyle = 'bars' | 'wave' | 'particles' | 'cyber-vu';
 export type ThemePalette = 'cyan' | 'violet' | 'emerald' | 'amber' | 'crimson';
 
+export interface EQSettings {
+  enabled: boolean;
+  bandCount: EQBandCount;
+  gains: number[];
+  modeGains?: Partial<Record<EQBandCount, number[]>>;
+  preAmpGain?: number; // -12dB to +12dB
+  autoGainCompensation?: boolean;
+  activePreset?: string;
+  qFactorMultiplier?: number;
+  // Legacy fields for backward compatibility
+  bass?: number;
+  lowMid?: number;
+  vocal?: number;
+  highMid?: number;
+  treble?: number;
+}
+
 export interface AppSettings {
-  // Web Audio DSP (30+ Parameters)
-  eq: {
-    enabled: boolean;
-    bass: number;
-    lowMid: number;
-    vocal: number;
-    highMid: number;
-    treble: number;
-  };
+  // Web Audio DSP (Multi-Band EQ, Spatial, Dynamics)
+  eq: EQSettings;
   spatial: {
     mode: SpatialMode;
     stereoWidth: number; // 0 to 200%

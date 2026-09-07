@@ -1,4 +1,5 @@
-import { AppSettings, Track } from '../types';
+import { AppSettings, EQBandCount, Track } from '../types';
+import { BAND_CONFIGURATIONS, calculateAutoGainCompensation } from './eqConfig';
 
 class SpotuiAudioEngine {
   private ctx: AudioContext | null = null;
@@ -11,6 +12,8 @@ class SpotuiAudioEngine {
   private analyserNode: AnalyserNode | null = null;
   private captureDestinationNode: MediaStreamAudioDestinationNode | null = null;
   private eqFilters: BiquadFilterNode[] = [];
+  private currentBandCount: EQBandCount = 5;
+  private currentQMultiplier: number = 1.0;
   private currentObjectUrl: string | null = null;
   private currentTrack: Track | null = null;
   private isSourceConnected: boolean = false;
@@ -93,30 +96,9 @@ class SpotuiAudioEngine {
         this.pannerNode = this.ctx.createStereoPanner();
       }
 
-      // Create 5-band EQ: 60Hz (Sub), 250Hz (Bass), 1000Hz (Vocal), 4000Hz (HighMid), 12000Hz (Treble)
-      const frequencies = [60, 250, 1000, 4000, 12000];
-      const types: BiquadFilterType[] = ['lowshelf', 'peaking', 'peaking', 'peaking', 'highshelf'];
+      // Rebuild initial EQ chain (5 bands default)
+      this.rebuildEQFilters(this.currentBandCount, this.currentQMultiplier);
 
-      this.eqFilters = frequencies.map((freq, i) => {
-        const filter = this.ctx!.createBiquadFilter();
-        filter.type = types[i];
-        filter.frequency.value = freq;
-        filter.gain.value = 0;
-        if (types[i] === 'peaking') {
-          filter.Q.value = 1.0;
-        }
-        return filter;
-      });
-
-      // Chain: PreAmp -> EQ Filters (5 Bands) -> Compressor -> MasterGain -> Panner -> Analyser -> Destination
-      let lastNode: AudioNode = this.preAmpGainNode;
-
-      this.eqFilters.forEach((filter) => {
-        lastNode.connect(filter);
-        lastNode = filter;
-      });
-
-      lastNode.connect(this.compressorNode);
       this.compressorNode.connect(this.masterGainNode);
 
       if (this.pannerNode) {
@@ -145,6 +127,50 @@ class SpotuiAudioEngine {
     } catch (e) {
       console.warn('Web Audio API context init fallback:', e);
     }
+  }
+
+  /**
+   * Dynamically constructs the BiquadFilterNode chain for any supported band count
+   */
+  public rebuildEQFilters(bandCount: EQBandCount, qMultiplier = 1.0) {
+    if (!this.ctx || !this.preAmpGainNode || !this.compressorNode) return;
+
+    // Disconnect old filters safely
+    try {
+      this.preAmpGainNode.disconnect();
+    } catch {}
+
+    this.eqFilters.forEach((f) => {
+      try {
+        f.disconnect();
+      } catch {}
+    });
+
+    const bandDefs = BAND_CONFIGURATIONS[bandCount] || BAND_CONFIGURATIONS[5];
+    this.currentBandCount = bandCount;
+    this.currentQMultiplier = qMultiplier;
+
+    this.eqFilters = bandDefs.map((def) => {
+      const filter = this.ctx!.createBiquadFilter();
+      filter.type = def.type;
+      filter.frequency.value = def.freq;
+      filter.gain.value = 0;
+      if (def.type === 'peaking') {
+        filter.Q.value = Math.max(0.1, def.defaultQ * qMultiplier);
+      } else {
+        filter.Q.value = def.defaultQ;
+      }
+      return filter;
+    });
+
+    // Wire chain: preAmpGainNode -> filter[0] -> ... -> filter[n-1] -> compressorNode
+    let lastNode: AudioNode = this.preAmpGainNode;
+    this.eqFilters.forEach((filter) => {
+      lastNode.connect(filter);
+      lastNode = filter;
+    });
+
+    lastNode.connect(this.compressorNode);
   }
 
   public async playTrack(track: Track, startTime = 0): Promise<void> {
@@ -224,25 +250,62 @@ class SpotuiAudioEngine {
     if (!this.ctx) return;
 
     const currTime = this.ctx.currentTime;
+    const isEqEnabled = Boolean(settings.eq?.enabled);
+    const targetBandCount: EQBandCount = settings.eq?.bandCount || 5;
+    const qMultiplier = settings.eq?.qFactorMultiplier || 1.0;
 
-    // Apply 5-Band EQ Gains
-    if (this.eqFilters && this.eqFilters.length === 5 && settings.eq) {
-      const isEqEnabled = Boolean(settings.eq.enabled);
-      const gains = [
-        isEqEnabled ? (settings.eq.bass ?? 0) : 0,
-        isEqEnabled ? (settings.eq.lowMid ?? 0) : 0,
-        isEqEnabled ? (settings.eq.vocal ?? 0) : 0,
-        isEqEnabled ? (settings.eq.highMid ?? 0) : 0,
-        isEqEnabled ? (settings.eq.treble ?? 0) : 0,
-      ];
-      this.eqFilters.forEach((f, i) => {
-        try {
-          f.gain.setTargetAtTime(gains[i], currTime, 0.03);
-        } catch {
-          f.gain.value = gains[i];
-        }
-      });
+    // Check if filter chain needs reconfiguration
+    if (
+      this.eqFilters.length !== targetBandCount ||
+      this.currentBandCount !== targetBandCount ||
+      Math.abs(this.currentQMultiplier - qMultiplier) > 0.01
+    ) {
+      this.rebuildEQFilters(targetBandCount, qMultiplier);
     }
+
+    // Resolve gains array
+    let activeGains: number[] = [];
+    if (Array.isArray(settings.eq?.gains) && settings.eq.gains.length === targetBandCount) {
+      activeGains = settings.eq.gains;
+    } else if (settings.eq?.modeGains && settings.eq.modeGains[targetBandCount]) {
+      activeGains = settings.eq.modeGains[targetBandCount]!;
+    } else if (targetBandCount === 5) {
+      activeGains = [
+        settings.eq.bass ?? 0,
+        settings.eq.lowMid ?? 0,
+        settings.eq.vocal ?? 0,
+        settings.eq.highMid ?? 0,
+        settings.eq.treble ?? 0,
+      ];
+    } else {
+      activeGains = new Array(targetBandCount).fill(0);
+    }
+
+    // Pre-Amp & Auto Gain Loudness Compensation
+    if (this.preAmpGainNode) {
+      const manualPreAmpDb = settings.eq?.preAmpGain ?? 0;
+      const autoCompDb = (isEqEnabled && settings.eq?.autoGainCompensation)
+        ? calculateAutoGainCompensation(activeGains)
+        : 0;
+      const totalPreAmpDb = isEqEnabled ? (manualPreAmpDb + autoCompDb) : 0;
+      const linearPreAmp = Math.max(0.05, Math.min(4.0, Math.pow(10, totalPreAmpDb / 20)));
+
+      try {
+        this.preAmpGainNode.gain.setTargetAtTime(linearPreAmp, currTime, 0.03);
+      } catch {
+        this.preAmpGainNode.gain.value = linearPreAmp;
+      }
+    }
+
+    // Apply Filter Gains
+    this.eqFilters.forEach((f, i) => {
+      const targetGain = isEqEnabled ? (activeGains[i] ?? 0) : 0;
+      try {
+        f.gain.setTargetAtTime(targetGain, currTime, 0.02);
+      } catch {
+        f.gain.value = targetGain;
+      }
+    });
 
     // Apply Compressor
     if (this.compressorNode && settings.compressor) {
@@ -304,6 +367,76 @@ class SpotuiAudioEngine {
     this.testToneOsc.start();
   }
 
+  // Play calibrated pink noise (1/f spectral density) for room acoustic calibration
+  public playPinkNoise() {
+    this.initAudioContext();
+    if (!this.ctx || !this.preAmpGainNode) return;
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    this.stopTestTone();
+
+    const bufferSize = this.ctx.sampleRate * 2;
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < bufferSize; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      output[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.05;
+      b6 = white * 0.115926;
+    }
+
+    const noiseSource = this.ctx.createBufferSource();
+    noiseSource.buffer = noiseBuffer;
+    noiseSource.loop = true;
+
+    this.testToneGain = this.ctx.createGain();
+    this.testToneGain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+
+    noiseSource.connect(this.testToneGain);
+    this.testToneGain.connect(this.preAmpGainNode);
+
+    noiseSource.start();
+    (this as any)._noiseSource = noiseSource;
+  }
+
+  // Play a logarithmic frequency sweep from 20Hz to 20kHz
+  public playSweep(duration = 4) {
+    this.initAudioContext();
+    if (!this.ctx || !this.preAmpGainNode) return;
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    this.stopTestTone();
+
+    this.testToneOsc = this.ctx.createOscillator();
+    this.testToneGain = this.ctx.createGain();
+
+    this.testToneOsc.type = 'sine';
+    const now = this.ctx.currentTime;
+    this.testToneOsc.frequency.setValueAtTime(20, now);
+    this.testToneOsc.frequency.exponentialRampToValueAtTime(20000, now + duration);
+    this.testToneGain.gain.setValueAtTime(0.2, now);
+
+    this.testToneOsc.connect(this.testToneGain);
+    this.testToneGain.connect(this.preAmpGainNode);
+
+    this.testToneOsc.start();
+    this.testToneOsc.stop(now + duration);
+    this.testToneOsc.onended = () => {
+      this.stopTestTone();
+    };
+  }
+
   public stopTestTone() {
     if (this.testToneOsc) {
       try {
@@ -311,6 +444,13 @@ class SpotuiAudioEngine {
         this.testToneOsc.disconnect();
       } catch {}
       this.testToneOsc = null;
+    }
+    if ((this as any)._noiseSource) {
+      try {
+        (this as any)._noiseSource.stop();
+        (this as any)._noiseSource.disconnect();
+      } catch {}
+      (this as any)._noiseSource = null;
     }
     if (this.testToneGain) {
       try {
@@ -332,6 +472,21 @@ class SpotuiAudioEngine {
     const data = new Uint8Array(this.analyserNode.frequencyBinCount);
     this.analyserNode.getByteTimeDomainData(data);
     return data;
+  }
+
+  public setAnalyserFftSize(size: number) {
+    if (this.analyserNode && [128, 256, 512, 1024, 2048].includes(size)) {
+      this.analyserNode.fftSize = size;
+    }
+  }
+
+  public getCompressionReduction(): number {
+    if (!this.compressorNode) return 0;
+    return this.compressorNode.reduction || 0;
+  }
+
+  public getSampleRate(): number {
+    return this.ctx?.sampleRate || 48000;
   }
 
   public onTimeUpdate(cb: (time: number, duration: number) => void) {
