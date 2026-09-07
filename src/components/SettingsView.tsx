@@ -144,6 +144,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
   };
 
   const toggleSecurityFlag = (key: keyof typeof sec) => {
