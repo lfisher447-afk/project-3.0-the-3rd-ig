@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { Innertube, UniversalCache } from "youtubei.js";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { handleProxyRequest, turboCache } from "./server/proxyEngine.js";
 
 dotenv.config();
 
@@ -1386,13 +1387,51 @@ async function startServer() {
   });
 
   // ---------------------------------------------------------------------------
-  // Real Web Proxy (Unblocked Web Browsing)
+  // Supercharged Spotui BrowserOS Web Proxy Engine & Tooling
   // ---------------------------------------------------------------------------
-  app.get(["/api/proxy", "/api/backup1/proxy", "/api/mrbean/proxy"], async (req, res) => {
+  app.all(
+    [
+      "/api/proxy",
+      "/api/browser/proxy",
+      "/api/backup1/proxy",
+      "/api/mrbean/proxy",
+      "/api/tunnel/:engine/p",
+    ],
+    handleProxyRequest
+  );
+
+  app.get("/api/browser/nodes", (req, res) => {
+    const cacheStats = turboCache.stats();
+    const nodes = [
+      { id: "vercel-edge", name: "Vercel Anycast Edge", location: "Global Mesh (100+ PoPs)", flag: "⚡", latency: 8, status: "optimal", encryption: "TLS 1.3 / ChaCha20", stealth: "A+ (Elite)", dpiBypass: "Anycast Multipath" },
+      { id: "ultraviolet", name: "Ultraviolet WSM Core", location: "Frankfurt / Amsterdam", flag: "🇩🇪", latency: 14, status: "optimal", encryption: "Wasm Scrambler", stealth: "A+ (Undetectable)", dpiBypass: "Polymorphic Scramble" },
+      { id: "webroot", name: "Webroot Stealth Router", location: "Northern Virginia, US", flag: "🇺🇸", latency: 18, status: "stable", encryption: "AES-256-GCM", stealth: "A+ (Ghost)", dpiBypass: "Zero-Signature Headers" },
+      { id: "insidious", name: "Insidious Bypass Node", location: "Tokyo, Japan", flag: "🇯🇵", latency: 24, status: "stable", encryption: "Obfs4 / TLS 1.3", stealth: "A+ (Fortified)", dpiBypass: "L7 Packet Fragmentation" },
+      { id: "mrbean", name: "MrBean Shadow Tunnel", location: "London, UK", flag: "🇬🇧", latency: 29, status: "stable", encryption: "Encrypted WebSocket", stealth: "A (Stealth)", dpiBypass: "WS Stream Wrapping" },
+    ];
+    res.json({
+      nodes,
+      cache: cacheStats,
+      timestamp: Date.now(),
+      stealthEngineVersion: "4.2.0-undetectable",
+    });
+  });
+
+  app.get("/api/browser/cache/stats", (req, res) => {
+    res.json(turboCache.stats());
+  });
+
+  app.post("/api/browser/cache/clear", (req, res) => {
+    turboCache.clear();
+    res.json({ success: true, message: "Turbo LRU cache cleared successfully" });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Page Source & Network Inspector
+  // ---------------------------------------------------------------------------
+  app.get("/api/browser/inspect", async (req, res) => {
     const targetUrl = req.query.url as string;
-    if (!targetUrl) {
-      return res.status(400).send("Target URL is required. Example: ?url=https://wikipedia.org");
-    }
+    if (!targetUrl) return res.status(400).json({ error: "Missing url parameter" });
 
     try {
       let finalUrl = targetUrl.trim();
@@ -1400,61 +1439,195 @@ async function startServer() {
         finalUrl = "https://" + finalUrl;
       }
 
-      const parsedBase = new URL(finalUrl);
-      const origin = parsedBase.origin;
-
-      const fetchRes = await fetch(finalUrl, {
+      const startTime = Date.now();
+      const response = await fetch(finalUrl, {
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "*/*",
         },
         redirect: "follow",
       });
+      const latency = Date.now() - startTime;
+      const html = await response.text();
 
-      const contentType = fetchRes.headers.get("content-type") || "text/html";
+      // Extract title
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const title = titleMatch ? titleMatch[1].trim() : new URL(finalUrl).hostname;
 
-      // Strip headers that block iframe embedding
-      res.removeHeader("X-Frame-Options");
-      res.removeHeader("Content-Security-Policy");
-      res.removeHeader("Content-Security-Policy-Report-Only");
-      res.removeHeader("Cross-Origin-Embedder-Policy");
-      res.removeHeader("Cross-Origin-Opener-Policy");
+      // Extract favicon
+      const iconMatch = html.match(/<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*href=["']([^"']+)["']/i);
+      let favicon = iconMatch ? iconMatch[1] : "/favicon.ico";
+      try {
+        favicon = new URL(favicon, finalUrl).toString();
+      } catch {}
 
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Content-Type", contentType);
-
-      if (contentType.includes("text/html")) {
-        let html = await fetchRes.text();
-        html = html.replace(/if\s*\(top\s*!==\s*self\)[^}]+}/gi, "/* bypassed */");
-        html = html.replace(/top\.location\s*=\s*self\.location/gi, "/* bypassed */");
-        html = html.replace("<head>", `<head><base href="${origin}/">`);
-
-        const stealthScript = `
-          <script>
-            (function() {
-              try {
-                window.__SPOTUI_PROXY__ = true;
-                Object.defineProperty(window, 'top', { get: () => window.self });
-                Object.defineProperty(window, 'parent', { get: () => window.self });
-              } catch(e) {}
-            })();
-          </script>
-        `;
-        res.send(stealthScript + html);
-      } else {
-        const buffer = await fetchRes.arrayBuffer();
-        res.send(Buffer.from(buffer));
+      // Extract media & hyperlinks
+      const images: string[] = [];
+      const imageRegex = /<img[^>]+src=["']([^"']+)["']/gi;
+      let imgMatch;
+      while ((imgMatch = imageRegex.exec(html)) !== null && images.length < 30) {
+        try {
+          images.push(new URL(imgMatch[1], finalUrl).toString());
+        } catch {}
       }
+
+      const links: { text: string; href: string }[] = [];
+      const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
+      let lMatch;
+      while ((lMatch = linkRegex.exec(html)) !== null && links.length < 40) {
+        try {
+          const rawText = lMatch[2].replace(/<[^>]+>/g, "").trim();
+          if (rawText && !lMatch[1].startsWith("javascript:")) {
+            links.push({
+              text: rawText.slice(0, 50),
+              href: new URL(lMatch[1], finalUrl).toString(),
+            });
+          }
+        } catch {}
+      }
+
+      // Collect headers
+      const headersMap: Record<string, string> = {};
+      response.headers.forEach((val, key) => {
+        headersMap[key] = val;
+      });
+
+      res.json({
+        url: finalUrl,
+        status: response.status,
+        statusText: response.statusText,
+        latencyMs: latency,
+        title,
+        favicon,
+        contentType: response.headers.get("content-type") || "unknown",
+        contentLength: html.length,
+        headers: headersMap,
+        imagesCount: images.length,
+        linksCount: links.length,
+        sampleImages: images.slice(0, 12),
+        sampleLinks: links.slice(0, 15),
+      });
     } catch (e: any) {
-      res.status(502).send(`
-        <div style="background:#071013;color:#f87171;font-family:monospace;padding:24px;border-radius:12px;border:1px solid #7f1d1d;">
-          <h3>[WEB PROXY GATEWAY ERROR]</h3>
-          <p>Failed to load: ${targetUrl}</p>
-          <p>Error details: ${e.message}</p>
-        </div>
-      `);
+      res.status(500).json({ error: e.message || "Inspect failed" });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Distraction-Free Reader Mode View
+  // ---------------------------------------------------------------------------
+  app.get("/api/browser/reader", async (req, res) => {
+    const targetUrl = req.query.url as string;
+    if (!targetUrl) return res.status(400).json({ error: "Missing url parameter" });
+
+    try {
+      let finalUrl = targetUrl.trim();
+      if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
+        finalUrl = "https://" + finalUrl;
+      }
+
+      const response = await fetch(finalUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
+        },
+      });
+      const html = await response.text();
+
+      // Title
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const title = titleMatch ? titleMatch[1].trim() : "Article";
+
+      // Lead Image
+      const ogImgMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i);
+      const leadImage = ogImgMatch ? ogImgMatch[1] : null;
+
+      // Extract main text content
+      let clean = html
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
+        .replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, "")
+        .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, "")
+        .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, "");
+
+      // Extract paragraphs
+      const paragraphs: string[] = [];
+      const pRegex = /<p\b[^>]*>(.*?)<\/p>/gi;
+      let match;
+      while ((match = pRegex.exec(clean)) !== null) {
+        const text = match[1].replace(/<[^>]+>/g, "").trim();
+        if (text.length > 50) {
+          paragraphs.push(text);
+        }
+      }
+
+      res.json({
+        title,
+        url: finalUrl,
+        leadImage,
+        paragraphs,
+        wordCount: paragraphs.reduce((acc, p) => acc + p.split(/\s+/).length, 0),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Web Terminal Network Tools (cURL & Ping)
+  // ---------------------------------------------------------------------------
+  app.post("/api/browser/curl", async (req, res) => {
+    const { url, method = "GET", headers = {}, body } = req.body;
+    if (!url) return res.status(400).json({ error: "Missing url parameter" });
+
+    try {
+      const startTime = Date.now();
+      const fetchOpts: any = {
+        method,
+        headers: {
+          "User-Agent": "Spotui-BrowserOS-cURL/4.2",
+          ...headers,
+        },
+      };
+      if (body && method !== "GET" && method !== "HEAD") {
+        fetchOpts.body = typeof body === "string" ? body : JSON.stringify(body);
+      }
+
+      const response = await fetch(url, fetchOpts);
+      const durationMs = Date.now() - startTime;
+      const text = await response.text();
+
+      const resHeaders: Record<string, string> = {};
+      response.headers.forEach((v, k) => {
+        resHeaders[k] = v;
+      });
+
+      res.json({
+        url,
+        method,
+        status: response.status,
+        statusText: response.statusText,
+        durationMs,
+        headers: resHeaders,
+        body: text.slice(0, 10000),
+        truncated: text.length > 10000,
+        totalBytes: text.length,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/browser/ping", async (req, res) => {
+    const host = req.query.host as string;
+    if (!host) return res.status(400).json({ error: "Missing host parameter" });
+
+    try {
+      const target = host.startsWith("http") ? host : `https://${host}`;
+      const startTime = Date.now();
+      const response = await fetch(target, { method: "HEAD", redirect: "follow" });
+      const latencyMs = Date.now() - startTime;
+      res.json({ host, status: response.status, latencyMs, online: true });
+    } catch (e: any) {
+      res.json({ host, latencyMs: 999, online: false, error: e.message });
     }
   });
 

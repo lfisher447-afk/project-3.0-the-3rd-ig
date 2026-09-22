@@ -1,39 +1,49 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { Readable } from "stream";
 
+function unscrambleUrl(scrambled: string, key = 0x5a): string {
+  if (!scrambled || !scrambled.startsWith("sp_")) return scrambled;
+  try {
+    let b64 = scrambled.slice(3).replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4 !== 0) b64 += "=";
+    const buf = Buffer.from(b64, "base64");
+    const out = Buffer.alloc(buf.length);
+    for (let i = 0; i < buf.length; i++) {
+      out[i] = buf[i] ^ key;
+    }
+    return out.toString("utf-8");
+  } catch {
+    return scrambled;
+  }
+}
+
 /**
- * Extracts and reconstructs the target URL, preserving nested query parameters.
+ * Extracts and reconstructs the target URL, preserving nested query parameters and unscrambling if needed.
  */
 function extractTargetUrl(req: VercelRequest): string | null {
+  let target = "";
   if (req.body && typeof req.body === "object" && req.body.url) {
-    return String(req.body.url);
-  }
-
-  const rawUrl = req.url || "";
-  try {
-    const dummyUrl = new URL(rawUrl, "http://localhost");
-    const target = dummyUrl.searchParams.get("url");
-    if (!target) return null;
-
-    const proxyParams = new Set(["url", "api_key", "redirect", "proxy", "mode", "ttl"]);
-    const extraParams: string[] = [];
-    for (const [k, v] of dummyUrl.searchParams.entries()) {
-      if (!proxyParams.has(k)) {
-        extraParams.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+    target = String(req.body.url);
+  } else {
+    const rawUrl = req.url || "";
+    try {
+      const dummyUrl = new URL(rawUrl, "http://localhost");
+      target = dummyUrl.searchParams.get("url") || dummyUrl.searchParams.get("q") || "";
+      if (!target) {
+        if (typeof req.query.url === "string") target = req.query.url;
+        else if (typeof req.query.q === "string") target = req.query.q;
       }
+    } catch {
+      if (typeof req.query.url === "string") target = req.query.url;
+      else if (typeof req.query.q === "string") target = req.query.q;
     }
-
-    if (extraParams.length > 0) {
-      const separator = target.includes("?") ? "&" : "?";
-      return `${target}${separator}${extraParams.join("&")}`;
-    }
-
-    return target;
-  } catch {
-    if (typeof req.query.url === "string") return req.query.url;
-    if (Array.isArray(req.query.url)) return req.query.url.join("/");
-    return null;
   }
+
+  if (!target) return null;
+  if (target.startsWith("sp_")) {
+    target = unscrambleUrl(target);
+  }
+  return target;
 }
 
 function sanitizeUrl(u?: string | null): string | null {
@@ -230,10 +240,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         <script>
           (function() {
             try {
-              window.__SPOTUI_VERCEL_PROXY__ = true;
-              window.__WSM_ACTIVE__ = true;
-              Object.defineProperty(window, 'top', { get: function() { return window.self; } });
-              Object.defineProperty(window, 'parent', { get: function() { return window.self; } });
+              Object.defineProperty(window, 'top', { get: function() { return window.self; }, configurable: true });
+              Object.defineProperty(window, 'parent', { get: function() { return window.self; }, configurable: true });
+              Object.defineProperty(window, 'frameElement', { get: function() { return null; }, configurable: true });
+              Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
+              if (!window.chrome) {
+                window.chrome = { runtime: {}, loadTimes: function() { return {}; }, csi: function() { return {}; } };
+              }
+              if (window.RTCPeerConnection) {
+                var OrigRTC = window.RTCPeerConnection;
+                window.RTCPeerConnection = function() { return new OrigRTC({ iceServers: [] }); };
+              }
+              var origOpen = window.open;
+              window.open = function(u) {
+                if (u) {
+                  try {
+                    var res = new URL(u, "${finalOrigin}").toString();
+                    window.location.href = '/api/proxy?url=' + encodeURIComponent(res);
+                  } catch(e) { window.location.href = u; }
+                }
+                return null;
+              };
+              var origFetch = window.fetch;
+              window.fetch = function(r, init) {
+                try {
+                  var uStr = typeof r === 'string' ? r : (r && r.url ? r.url : '');
+                  if (uStr && !uStr.startsWith('data:') && !uStr.startsWith('blob:') && !uStr.includes('/api/proxy')) {
+                    var resolved = new URL(uStr, "${finalOrigin}").toString();
+                    var proxied = '/api/proxy?url=' + encodeURIComponent(resolved);
+                    if (typeof r === 'string') r = proxied;
+                    else if (r && r.url) r = new Request(proxied, init);
+                  }
+                } catch(e) {}
+                return origFetch.call(this, r, init);
+              };
+              var origXHR = XMLHttpRequest.prototype.open;
+              XMLHttpRequest.prototype.open = function(m, u) {
+                try {
+                  if (typeof u === 'string' && !u.startsWith('data:') && !u.startsWith('blob:') && !u.includes('/api/proxy')) {
+                    u = '/api/proxy?url=' + encodeURIComponent(new URL(u, "${finalOrigin}").toString());
+                  }
+                } catch(e) {}
+                return origXHR.apply(this, arguments);
+              };
             } catch(e) {}
           })();
         </script>
