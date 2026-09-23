@@ -5,7 +5,7 @@ import { Track } from '../../../types';
 import { saveTrack } from '../../../lib/db';
 
 interface YtMusicSearchProps {
-  onPlayTrack: (track: Track) => void;
+  onPlayTrack: (track: Track, trackList?: Track[]) => void;
   onAddToQueue: (track: Track) => void;
 }
 
@@ -106,9 +106,22 @@ export const YtMusicSearch: React.FC<YtMusicSearchProps> = ({ onPlayTrack, onAdd
       {/* Results Grid */}
       {results.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-xs font-mono text-zinc-400 uppercase tracking-wider">
-            Results ({results.length})
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-mono text-zinc-400 uppercase tracking-wider">
+              Results ({results.length})
+            </h3>
+            <button
+              onClick={() => {
+                const list = results.map((r) => ytMusicHandler.toAudioTrack(r));
+                onPlayTrack(list[0], list);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#48e4ff]/10 hover:bg-[#48e4ff]/20 text-[#48e4ff] text-xs font-mono font-bold border border-[#48e4ff]/30 transition cursor-pointer"
+              title="Play All Search Results"
+            >
+              <Play size={13} fill="currentColor" />
+              <span>Play All</span>
+            </button>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {results.map((track) => (
@@ -117,7 +130,11 @@ export const YtMusicSearch: React.FC<YtMusicSearchProps> = ({ onPlayTrack, onAdd
                 className="p-3 bg-[#071720] border border-[#153847] hover:border-[#48e4ff]/50 rounded-2xl transition flex items-center justify-between gap-3 group"
               >
                 <div
-                  onClick={() => onPlayTrack(ytMusicHandler.toAudioTrack(track))}
+                  onClick={() => {
+                    const audioTrack = ytMusicHandler.toAudioTrack(track);
+                    const list = results.map((r) => ytMusicHandler.toAudioTrack(r));
+                    onPlayTrack(audioTrack, list);
+                  }}
                   className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
                 >
                   <div className="relative w-14 h-14 rounded-xl overflow-hidden bg-zinc-900 shrink-0 group/cover">
@@ -170,7 +187,11 @@ export const YtMusicSearch: React.FC<YtMusicSearchProps> = ({ onPlayTrack, onAdd
                   </button>
 
                   <button
-                    onClick={() => onPlayTrack(ytMusicHandler.toAudioTrack(track))}
+                    onClick={() => {
+                      const audioTrack = ytMusicHandler.toAudioTrack(track);
+                      const list = results.map((r) => ytMusicHandler.toAudioTrack(r));
+                      onPlayTrack(audioTrack, list);
+                    }}
                     className="p-2.5 rounded-xl bg-[#48e4ff] hover:bg-[#38cbe6] text-[#051a24] font-bold transition shadow-md"
                     title="Play Track"
                   >

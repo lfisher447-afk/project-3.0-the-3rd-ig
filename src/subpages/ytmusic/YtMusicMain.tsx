@@ -8,7 +8,7 @@ import { Play, Flame, Sparkles, Radio, Loader2 } from 'lucide-react';
 interface YtMusicMainProps {
   currentTrack: Track | null;
   isPlaying: boolean;
-  onPlayTrack: (track: Track) => void;
+  onPlayTrack: (track: Track, trackList?: Track[]) => void;
   onTogglePlay: () => void;
   onNext: () => void;
   onPrev: () => void;
@@ -99,7 +99,22 @@ export const YtMusicMain: React.FC<YtMusicMainProps> = ({
             <Flame size={20} className="text-amber-400" />
             <span>Top Trending Music Hits</span>
           </div>
-          <span className="text-xs font-mono text-zinc-400">InnerTube Web Remix Feed</span>
+          <div className="flex items-center gap-3">
+            {charts.length > 0 && (
+              <button
+                onClick={() => {
+                  const trackList = charts.map((c) => ytMusicHandler.toAudioTrack(c));
+                  onPlayTrack(trackList[0], trackList);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#48e4ff]/10 hover:bg-[#48e4ff]/20 text-[#48e4ff] text-xs font-mono font-bold border border-[#48e4ff]/30 transition cursor-pointer"
+                title="Play Entire Trending Chart"
+              >
+                <Play size={13} fill="currentColor" />
+                <span>Play All ({charts.length})</span>
+              </button>
+            )}
+            <span className="text-xs font-mono text-zinc-400 hidden sm:inline">InnerTube Web Remix Feed</span>
+          </div>
         </div>
 
         {loadingCharts ? (
@@ -112,7 +127,11 @@ export const YtMusicMain: React.FC<YtMusicMainProps> = ({
             {charts.slice(0, 12).map((song) => (
               <div
                 key={song.id}
-                onClick={() => onPlayTrack(ytMusicHandler.toAudioTrack(song))}
+                onClick={() => {
+                  const track = ytMusicHandler.toAudioTrack(song);
+                  const trackList = charts.map((c) => ytMusicHandler.toAudioTrack(c));
+                  onPlayTrack(track, trackList);
+                }}
                 className="p-3 rounded-2xl bg-[#07161e] border border-[#153847] hover:border-[#48e4ff]/50 transition group cursor-pointer space-y-2"
               >
                 <div className="relative aspect-square rounded-xl overflow-hidden bg-zinc-900">

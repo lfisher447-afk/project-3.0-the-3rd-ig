@@ -35,6 +35,7 @@ import { SettingsView } from './components/SettingsView';
 import { SpotifyMain } from './subpages/spotify/SpotifyMain';
 import { InvidiousMain } from './subpages/invidious/InvidiousMain';
 import { YtMusicMain } from './subpages/ytmusic/YtMusicMain';
+import { ytMusicHandler } from './subpages/ytmusic/handler/YtMusicHandler';
 import { ProxiesMain } from './subpages/proxies/ProxiesMain';
 import { WebProxyMain } from './subpages/webproxy/WebProxyMain';
 import { VaultMain } from './subpages/vault/VaultMain';
@@ -252,6 +253,21 @@ export default function App() {
     window.location.hash = `#/${tab}`;
   };
 
+  // Synchronized playback refs to prevent stale closure bugs when songs end
+  const queueRef = useRef<Track[]>(queue);
+  const tracksRef = useRef<Track[]>(tracks);
+  const currentTrackRef = useRef<Track | null>(currentTrack);
+  const settingsRef = useRef<AppSettings>(settings);
+  const isPlayingRef = useRef<boolean>(isPlaying);
+
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+  useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+  useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+
+  const handleNextTrackRef = useRef<((isAuto?: boolean) => Promise<void> | void) | null>(null);
+
   // 1. Initialize Engine, WS, DB and Security
   useEffect(() => {
     initWSProxy();
@@ -309,8 +325,11 @@ export default function App() {
       setDuration(dur);
     });
 
+    // When song ends, call latest handleNextTrackRef with isAuto = true
     audioEngine.onEnded(() => {
-      handleNextTrack();
+      if (handleNextTrackRef.current) {
+        handleNextTrackRef.current(true);
+      }
     });
   }, []);
 
@@ -324,16 +343,21 @@ export default function App() {
 
   // Handle Play/Pause
   const handlePlayPause = async () => {
-    if (!currentTrack && tracks.length > 0) {
-      handlePlayTrack(tracks[0]);
+    const active = currentTrackRef.current || currentTrack;
+    const currentTracks = tracksRef.current.length > 0 ? tracksRef.current : tracks;
+
+    if (!active && currentTracks.length > 0) {
+      await handlePlayTrack(currentTracks[0]);
       return;
     }
     if (isPlaying) {
       audioEngine.pause();
       setIsPlaying(false);
+      isPlayingRef.current = false;
     } else {
       await audioEngine.play();
       setIsPlaying(true);
+      isPlayingRef.current = true;
     }
   };
 
@@ -341,35 +365,137 @@ export default function App() {
   const handlePlayTrack = async (track: Track, trackList?: Track[]) => {
     try {
       setCurrentTrack(track);
+      currentTrackRef.current = track;
       setIsPlaying(true);
+      isPlayingRef.current = true;
+
       if (trackList && trackList.length > 0) {
         setQueue(trackList);
+        queueRef.current = trackList;
+      } else {
+        // Ensure track is part of queue to maintain prev/next continuity
+        setQueue((prev) => {
+          if (!prev.some((t) => t.id === track.id)) {
+            const nextQ = [...prev, track];
+            queueRef.current = nextQ;
+            return nextQ;
+          }
+          return prev;
+        });
       }
+
+      // Sync OS MediaSession API (lock screens, headsets, media keys)
+      if ('mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: track.title,
+            artist: track.artist || 'Spotui Web',
+            album: track.album || 'Spotui Signal Room',
+            artwork: [
+              {
+                src: track.artwork || '/favicon.ico',
+                sizes: '512x512',
+                type: 'image/jpeg',
+              },
+            ],
+          });
+          navigator.mediaSession.setActionHandler('play', () => handlePlayPause());
+          navigator.mediaSession.setActionHandler('pause', () => handlePlayPause());
+          navigator.mediaSession.setActionHandler('previoustrack', () => handlePrevTrack());
+          navigator.mediaSession.setActionHandler('nexttrack', () => handleNextTrack(false));
+        } catch {}
+      }
+
       await audioEngine.playTrack(track);
     } catch (e) {
       console.warn('Playback error:', e);
     }
   };
 
-  // Next Track
-  const handleNextTrack = () => {
-    const listToUse = queue.length > 0 ? queue : tracks;
-    if (listToUse.length === 0) return;
-    const currentIndex = listToUse.findIndex((t) => t.id === currentTrack?.id);
-    let nextIndex = (currentIndex + 1) % listToUse.length;
-    if (settings.playback.shuffle) {
-      nextIndex = Math.floor(Math.random() * listToUse.length);
+  // Next Track (isAuto = true when triggered by song ending)
+  const handleNextTrack = async (isAuto = false) => {
+    const currentQueue = queueRef.current;
+    const currentTracks = tracksRef.current;
+    const activeTrack = currentTrackRef.current;
+    const currentSettings = settingsRef.current;
+
+    // 1. Repeat Single Track Mode
+    if (isAuto && currentSettings.playback.repeatMode === 'one' && activeTrack) {
+      await handlePlayTrack(activeTrack);
+      return;
     }
-    handlePlayTrack(listToUse[nextIndex]);
+
+    let listToUse = currentQueue.length > 0 ? currentQueue : currentTracks;
+
+    // If currently playing a single YouTube song with no queue, auto-fetch trending charts to keep music playing
+    if (listToUse.length === 0 || (listToUse.length === 1 && listToUse[0].id === activeTrack?.id)) {
+      if (activeTrack && activeTrack.source === 'youtube') {
+        try {
+          const charts = await ytMusicHandler.getTrendingCharts();
+          if (charts && charts.length > 0) {
+            const mapped = charts.map((c) => ytMusicHandler.toAudioTrack(c)).filter((c) => c.id !== activeTrack.id);
+            if (mapped.length > 0) {
+              const extended = [activeTrack, ...mapped];
+              setQueue(extended);
+              queueRef.current = extended;
+              listToUse = extended;
+            }
+          }
+        } catch (e) {
+          console.warn('[AutoPlayNext] Chart fallback failed:', e);
+        }
+      }
+    }
+
+    if (listToUse.length === 0) return;
+
+    const currentIndex = activeTrack ? listToUse.findIndex((t) => t.id === activeTrack.id) : -1;
+
+    // 2. Repeat Mode: OFF check at end of playlist/queue
+    if (
+      isAuto &&
+      currentSettings.playback.repeatMode === 'off' &&
+      currentIndex !== -1 &&
+      currentIndex >= listToUse.length - 1
+    ) {
+      if (!currentSettings.playback.autoPlayNext) {
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+        audioEngine.pause();
+        return;
+      }
+    }
+
+    let nextIndex: number;
+    if (currentSettings.playback.shuffle) {
+      if (listToUse.length <= 1) {
+        nextIndex = 0;
+      } else {
+        do {
+          nextIndex = Math.floor(Math.random() * listToUse.length);
+        } while (nextIndex === currentIndex && listToUse.length > 1);
+      }
+    } else {
+      nextIndex = (currentIndex + 1) % listToUse.length;
+    }
+
+    await handlePlayTrack(listToUse[nextIndex]);
   };
 
+  handleNextTrackRef.current = handleNextTrack;
+
   // Prev Track
-  const handlePrevTrack = () => {
-    const listToUse = queue.length > 0 ? queue : tracks;
+  const handlePrevTrack = async () => {
+    const currentQueue = queueRef.current;
+    const currentTracks = tracksRef.current;
+    const activeTrack = currentTrackRef.current;
+
+    const listToUse = currentQueue.length > 0 ? currentQueue : currentTracks;
     if (listToUse.length === 0) return;
-    const currentIndex = listToUse.findIndex((t) => t.id === currentTrack?.id);
+
+    const currentIndex = activeTrack ? listToUse.findIndex((t) => t.id === activeTrack.id) : -1;
     const prevIndex = (currentIndex - 1 + listToUse.length) % listToUse.length;
-    handlePlayTrack(listToUse[prevIndex]);
+    await handlePlayTrack(listToUse[prevIndex]);
   };
 
   // Seek
@@ -869,8 +995,19 @@ export default function App() {
           {activeTab === 'library' && (
             <VaultMain
               onPlayTrack={handlePlayTrack}
+              onAddToQueue={handleAddToQueue}
               currentTrackId={currentTrack?.id}
               isPlaying={isPlaying}
+              tracks={tracks}
+              playlists={playlists}
+              onTracksChange={(updated) => {
+                setTracks(updated);
+                tracksRef.current = updated;
+              }}
+              onPlaylistsChange={(updated) => {
+                setPlaylists(updated);
+              }}
+              onOpenDsp={() => setShowDspModal(true)}
             />
           )}
 

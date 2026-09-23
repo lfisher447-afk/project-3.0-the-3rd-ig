@@ -25,6 +25,7 @@ class SpotuiAudioEngine {
   private onErrorCallback: ((err: string) => void) | null = null;
   private stateChangeListeners: Array<(state: { currentTime: number; duration: number; isLooping: boolean }) => void> = [];
   private isLooping: boolean = false;
+  private hasTriggeredEndedForCurrentTrack: boolean = false;
 
   constructor() {
     this.audio = new Audio();
@@ -36,12 +37,30 @@ class SpotuiAudioEngine {
       if (this.onTimeUpdateCallback) {
         this.onTimeUpdateCallback(this.audio.currentTime, this.audio.duration || 0);
       }
+
+      // Stream End Watchdog:
+      // Certain chunked HTTP/WebM streams pause at the end of the byte stream without firing the native 'ended' event
+      if (
+        !this.isLooping &&
+        !this.hasTriggeredEndedForCurrentTrack &&
+        this.audio.duration > 2 &&
+        this.audio.currentTime >= this.audio.duration - 0.3 &&
+        (this.audio.paused || this.audio.ended)
+      ) {
+        this.hasTriggeredEndedForCurrentTrack = true;
+        if (this.onEndedCallback) {
+          this.onEndedCallback();
+        }
+      }
     });
 
     this.audio.addEventListener('ended', () => {
       this.notifyStateChange();
-      if (this.onEndedCallback) {
-        this.onEndedCallback();
+      if (!this.hasTriggeredEndedForCurrentTrack) {
+        this.hasTriggeredEndedForCurrentTrack = true;
+        if (this.onEndedCallback) {
+          this.onEndedCallback();
+        }
       }
     });
 
@@ -175,6 +194,7 @@ class SpotuiAudioEngine {
 
   public async playTrack(track: Track, startTime = 0): Promise<void> {
     this.currentTrack = track;
+    this.hasTriggeredEndedForCurrentTrack = false;
     this.initAudioContext();
     if (this.ctx?.state === 'suspended') {
       await this.ctx.resume().catch(() => {});
@@ -340,6 +360,19 @@ class SpotuiAudioEngine {
         this.masterGainNode.gain.setTargetAtTime(targetGain, currTime, 0.03);
       } catch {
         this.masterGainNode.gain.value = targetGain;
+      }
+    }
+
+    // Sync HTML5 Audio properties with settings
+    if (settings.playback) {
+      const vol = settings.playback.muted ? 0 : (settings.playback.volume ?? 1);
+      this.setVolume(vol);
+      if (typeof settings.playback.playbackRate === 'number') {
+        this.setPlaybackRate(settings.playback.playbackRate);
+      }
+      const shouldLoop = settings.playback.repeatMode === 'one';
+      if (this.isLooping !== shouldLoop) {
+        this.setLooping(shouldLoop);
       }
     }
   }

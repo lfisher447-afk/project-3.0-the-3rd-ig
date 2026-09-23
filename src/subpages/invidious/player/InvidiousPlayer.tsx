@@ -675,7 +675,12 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
                 setIsPlaying(true);
               }}
               onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
+              onEnded={() => {
+                setIsPlaying(false);
+                if (metadata.relatedVideos && metadata.relatedVideos.length > 0) {
+                  onSelectVideo(metadata.relatedVideos[0].id);
+                }
+              }}
               onError={() => {
                 console.warn('HTML5 Stream blocked or rate-limited. Auto-routing to NerdVPN Invidious Node...');
                 setStreamError(true);

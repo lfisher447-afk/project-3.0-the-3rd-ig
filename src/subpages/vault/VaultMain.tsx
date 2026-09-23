@@ -1,61 +1,142 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   FolderLock,
   Play,
+  Shuffle,
   Trash2,
   Download,
+  Upload,
   Plus,
   Music2,
   Disc,
   Search,
   HardDrive,
-  Sparkles,
-  Layers,
   Check,
+  ListPlus,
+  Clock,
+  ArrowUpDown,
+  FileAudio,
+  Radio,
+  Sliders,
+  Sparkles,
+  Heart,
+  Share2,
 } from 'lucide-react';
 import { Track, Playlist } from '../../types';
-import { getAllTracks, getAllPlaylists, deleteTrack, deletePlaylist, savePlaylist } from '../../lib/db';
+import {
+  saveTrack,
+  saveTracksBatch,
+  deleteTrack,
+  savePlaylist,
+  deletePlaylist,
+  getAllTracks,
+  getAllPlaylists,
+} from '../../lib/db';
 
-interface VaultMainProps {
+export interface VaultMainProps {
   onPlayTrack: (track: Track, trackList?: Track[]) => void;
+  onAddToQueue: (track: Track) => void;
   currentTrackId?: string;
   isPlaying?: boolean;
+  tracks: Track[];
+  playlists: Playlist[];
+  onTracksChange: (tracks: Track[]) => void;
+  onPlaylistsChange: (playlists: Playlist[]) => void;
+  onOpenDsp?: () => void;
 }
+
+type SourceFilter = 'all' | 'local' | 'youtube' | 'spotify' | 'liked';
+type SortField = 'addedAt' | 'title' | 'artist' | 'duration';
 
 export const VaultMain: React.FC<VaultMainProps> = ({
   onPlayTrack,
+  onAddToQueue,
   currentTrackId,
-  isPlaying,
+  isPlaying = false,
+  tracks,
+  playlists,
+  onTracksChange,
+  onPlaylistsChange,
+  onOpenDsp,
 }) => {
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [activeTab, setActiveTab] = useState<'tracks' | 'playlists'>('tracks');
+  const [activeTab, setActiveTab] = useState<'tracks' | 'playlists' | 'upload'>('tracks');
   const [searchFilter, setSearchFilter] = useState('');
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+  const [sortBy, setSortBy] = useState<SortField>('addedAt');
+  const [sortAsc, setSortAsc] = useState(false);
+
+  // Modals and state
+  const [showCreatePlaylistModal, setShowCreatePlaylistModal] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [addToPlaylistTrack, setAddToPlaylistTrack] = useState<Track | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
-  const loadData = async () => {
-    const [t, p] = await Promise.all([getAllTracks(), getAllPlaylists()]);
-    setTracks(t);
-    setPlaylists(p);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((curr) => (curr === msg ? null : curr));
+    }, 3000);
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const handleDeleteTrack = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    await deleteTrack(id);
-    await loadData();
+  // Helper to format track duration
+  const formatTime = (secs: number) => {
+    if (!Number.isFinite(secs) || secs < 0) return '0:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const handleDeletePlaylist = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    await deletePlaylist(id);
-    await loadData();
+  // Filter and Sort tracks
+  const filteredTracks = tracks
+    .filter((track) => {
+      // Source filter
+      if (sourceFilter === 'local' && track.source !== 'local') return false;
+      if (sourceFilter === 'youtube' && track.source !== 'youtube') return false;
+      if (sourceFilter === 'spotify' && track.source !== 'spotify') return false;
+      if (sourceFilter === 'liked' && !track.liked) return false;
+
+      // Text query
+      if (!searchFilter.trim()) return true;
+      const q = searchFilter.toLowerCase();
+      return (
+        track.title.toLowerCase().includes(q) ||
+        track.artist.toLowerCase().includes(q) ||
+        (track.album && track.album.toLowerCase().includes(q))
+      );
+    })
+    .sort((a, b) => {
+      let result = 0;
+      if (sortBy === 'addedAt') {
+        result = (a.addedAt || 0) - (b.addedAt || 0);
+      } else if (sortBy === 'title') {
+        result = a.title.localeCompare(b.title);
+      } else if (sortBy === 'artist') {
+        result = a.artist.localeCompare(b.artist);
+      } else if (sortBy === 'duration') {
+        result = (a.duration || 0) - (b.duration || 0);
+      }
+      return sortAsc ? result : -result;
+    });
+
+  // Track deletion
+  const handleDeleteTrack = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      await deleteTrack(id);
+      const updated = tracks.filter((t) => t.id !== id);
+      onTracksChange(updated);
+      showToast('Track deleted from Vault');
+    } catch (err: any) {
+      showToast(`Error deleting track: ${err.message}`);
+    }
   };
 
+  // Playlist creation
   const handleCreatePlaylist = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPlaylistName.trim()) return;
@@ -64,198 +145,650 @@ export const VaultMain: React.FC<VaultMainProps> = ({
       id: `pl_${Date.now()}`,
       name: newPlaylistName.trim(),
       source: 'local',
-      trackIds: [],
+      trackIds: addToPlaylistTrack ? [addToPlaylistTrack.id] : [],
       createdAt: Date.now(),
     };
 
-    await savePlaylist(newP);
-    setNewPlaylistName('');
-    setShowCreateModal(false);
-    await loadData();
+    try {
+      await savePlaylist(newP);
+      const updatedPlaylists = [newP, ...playlists];
+      onPlaylistsChange(updatedPlaylists);
+      setNewPlaylistName('');
+      setShowCreatePlaylistModal(false);
+      setAddToPlaylistTrack(null);
+      showToast(`Created playlist "${newP.name}"`);
+    } catch (err: any) {
+      showToast(`Failed to create playlist: ${err.message}`);
+    }
   };
 
+  // Playlist deletion
+  const handleDeletePlaylist = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deletePlaylist(id);
+      const updated = playlists.filter((p) => p.id !== id);
+      onPlaylistsChange(updated);
+      showToast('Playlist deleted');
+    } catch (err: any) {
+      showToast(`Failed to delete playlist: ${err.message}`);
+    }
+  };
+
+  // Add / remove track in playlist
+  const handleToggleTrackInPlaylist = async (playlist: Playlist, trackId: string) => {
+    const exists = playlist.trackIds.includes(trackId);
+    const updatedIds = exists
+      ? playlist.trackIds.filter((id) => id !== trackId)
+      : [...playlist.trackIds, trackId];
+
+    const updatedPl = { ...playlist, trackIds: updatedIds };
+    await savePlaylist(updatedPl);
+    const updatedAll = playlists.map((p) => (p.id === playlist.id ? updatedPl : p));
+    onPlaylistsChange(updatedAll);
+    showToast(exists ? 'Removed track from playlist' : 'Added track to playlist');
+  };
+
+  // Play All
+  const handlePlayAll = () => {
+    if (filteredTracks.length === 0) return;
+    onPlayTrack(filteredTracks[0], filteredTracks);
+  };
+
+  // Shuffle Play
+  const handleShufflePlay = () => {
+    if (filteredTracks.length === 0) return;
+    const shuffled = [...filteredTracks].sort(() => Math.random() - 0.5);
+    onPlayTrack(shuffled[0], shuffled);
+  };
+
+  // Play a specific playlist
+  const handlePlayPlaylist = (pl: Playlist) => {
+    const plTracks = tracks.filter((t) => pl.trackIds.includes(t.id));
+    if (plTracks.length === 0) {
+      showToast('Playlist is currently empty. Add tracks to it first.');
+      return;
+    }
+    onPlayTrack(plTracks[0], plTracks);
+  };
+
+  // Audio File Processor
+  const processAudioFiles = async (files: FileList | File[]) => {
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+
+    const newTracks: Track[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|flac|ogg|m4a|aac|opus|webm)$/i)) {
+        continue;
+      }
+
+      // Read audio duration from in-memory Audio object
+      let duration = 180;
+      try {
+        const objectUrl = URL.createObjectURL(file);
+        const tempAudio = new Audio();
+        tempAudio.src = objectUrl;
+
+        await new Promise<void>((resolve) => {
+          tempAudio.addEventListener('loadedmetadata', () => {
+            if (Number.isFinite(tempAudio.duration)) {
+              duration = Math.round(tempAudio.duration);
+            }
+            resolve();
+          });
+          tempAudio.addEventListener('error', () => resolve());
+          setTimeout(resolve, 1500); // 1.5s timeout fallback
+        });
+        URL.revokeObjectURL(objectUrl);
+      } catch {}
+
+      // Clean title and artist from filename
+      const cleanName = file.name.replace(/\.[^/.]+$/, '');
+      const parts = cleanName.split(' - ');
+      const artist = parts.length > 1 ? parts[0].trim() : 'Local Audio File';
+      const title = parts.length > 1 ? parts.slice(1).join(' - ').trim() : cleanName.trim();
+
+      const track: Track = {
+        id: `local_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 7)}`,
+        title,
+        artist,
+        album: 'Vault Local Storage',
+        duration,
+        durationText: formatTime(duration),
+        source: 'local',
+        fileName: file.name,
+        size: file.size,
+        addedAt: Date.now(),
+        blob: file,
+      };
+
+      await saveTrack(track);
+      newTracks.push(track);
+    }
+
+    if (newTracks.length > 0) {
+      const updated = [...newTracks, ...tracks];
+      onTracksChange(updated);
+      showToast(`Imported ${newTracks.length} lossless track(s) to Vault`);
+      setActiveTab('tracks');
+    } else {
+      showToast('No valid audio files detected');
+    }
+
+    setIsUploading(false);
+  };
+
+  // Export Vault Backup
   const handleExportVault = () => {
     const vaultData = {
+      app: 'SpotUI Studio v3.5',
       version: '3.0',
       exportedAt: new Date().toISOString(),
-      tracks,
+      trackCount: tracks.length,
+      playlistCount: playlists.length,
+      tracks: tracks.map((t) => ({ ...t, blob: undefined })), // Blobs cannot be exported to JSON
       playlists,
     };
     const blob = new Blob([JSON.stringify(vaultData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `spotui-vault-backup-${Date.now()}.json`;
+    a.download = `spotui-vault-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    showToast('Vault backup file downloaded');
   };
 
-  const filteredTracks = tracks.filter(
-    (t) =>
-      t.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      t.artist.toLowerCase().includes(searchFilter.toLowerCase())
-  );
+  // Import Vault Backup
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      if (!parsed.tracks || !Array.isArray(parsed.tracks)) {
+        throw new Error('Invalid vault backup format.');
+      }
+
+      await saveTracksBatch(parsed.tracks);
+      if (Array.isArray(parsed.playlists)) {
+        for (const pl of parsed.playlists) {
+          await savePlaylist(pl);
+        }
+      }
+
+      const [freshTracks, freshPlaylists] = await Promise.all([getAllTracks(), getAllPlaylists()]);
+      onTracksChange(freshTracks);
+      onPlaylistsChange(freshPlaylists);
+      showToast(`Restored ${parsed.tracks.length} tracks & ${parsed.playlists?.length || 0} playlists!`);
+    } catch (err: any) {
+      showToast(`Import failed: ${err.message}`);
+    }
+
+    if (backupInputRef.current) {
+      backupInputRef.current.value = '';
+    }
+  };
 
   return (
-    <div className="space-y-8 select-none pb-24 animate-in fade-in duration-300">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#163842] pb-6">
+    <div className="space-y-8 select-none pb-28 animate-in fade-in duration-300">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-slate-900/95 border border-cyan-500/50 text-white text-xs font-mono shadow-2xl flex items-center gap-2.5 backdrop-blur-md animate-in slide-in-from-top-3">
+          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Hidden File Inputs */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={(e) => e.target.files && processAudioFiles(e.target.files)}
+        multiple
+        accept="audio/*,.mp3,.flac,.m4a,.aac,.ogg,.opus,.wav,.webm"
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={backupInputRef}
+        onChange={handleImportBackup}
+        accept=".json,application/json"
+        className="hidden"
+      />
+
+      {/* Header Banner */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-slate-800/80 pb-6">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="p-1.5 rounded-lg bg-[#48e4ff]/20 border border-[#48e4ff]/40 text-[#48e4ff]">
-              <FolderLock size={18} />
+          <div className="flex items-center gap-2 text-xs text-slate-400 mb-1.5">
+            <span className="text-cyan-400 font-mono font-bold flex items-center gap-1.5">
+              <FolderLock size={15} />
+              <span>PERSISTENT VAULT</span>
             </span>
-            <span className="text-[10px] uppercase font-mono tracking-widest text-[#48e4ff] font-bold">
-              IndexedDB Persistent Storage
-            </span>
+            <span aria-hidden="true">·</span>
+            <span>IndexedDB Local Engine</span>
+            <span aria-hidden="true">·</span>
+            <span>Zero-Cloud Offline Storage</span>
           </div>
-          <h1 className="text-3xl font-serif font-bold text-white tracking-tight">
+
+          <h1 className="text-3xl lg:text-4xl font-serif font-bold text-white tracking-tight">
             Vault Audio Library
           </h1>
-          <p className="text-xs text-[#789d9a] mt-1 max-w-xl">
-            Offline-synced tracks, user-curated playlists, and lossless backups stored in browser persistence.
+          <p className="text-xs text-slate-400 mt-1 max-w-xl leading-relaxed">
+            Persistent audio storage, drag & drop local uploads, custom playlists, and instant continuous playback.
           </p>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2">
+        {/* Global Vault Controls */}
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
-            onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2.5 bg-[#091b20] hover:bg-[#122e36] text-zinc-300 hover:text-white border border-[#163942] rounded-xl text-xs font-bold transition flex items-center gap-1.5"
+            onClick={() => fileInputRef.current?.click()}
+            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer shadow-sm"
           >
-            <Plus size={14} />
+            <Upload size={14} className="text-cyan-400" />
+            <span>Upload Audio</span>
+          </button>
+
+          <button
+            onClick={() => setShowCreatePlaylistModal(true)}
+            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer shadow-sm"
+          >
+            <Plus size={14} className="text-purple-400" />
             <span>New Playlist</span>
           </button>
+
           <button
             onClick={handleExportVault}
-            className="px-4 py-2.5 bg-[#48e4ff] hover:bg-[#38bdf8] text-black font-bold text-xs rounded-xl transition flex items-center gap-2 shadow-lg shadow-cyan-900/30"
+            className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Download JSON Library Backup"
           >
             <Download size={14} />
-            <span>Export Vault</span>
+            <span>Export</span>
+          </button>
+
+          <button
+            onClick={() => backupInputRef.current?.click()}
+            className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Restore Vault from JSON Backup"
+          >
+            <HardDrive size={14} />
+            <span>Restore</span>
           </button>
         </div>
       </div>
 
-      {/* Stats Ribbon */}
+      {/* Metrics Row (Adhering to anti-slop guidelines: no pill boxes) */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-5 rounded-2xl bg-[#081a1e] border border-[#153a43] flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-[#48e4ff]/15 flex items-center justify-center text-[#48e4ff]">
+        <div className="p-5 rounded-2xl bg-[#090d16] border border-slate-800/80 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
             <Music2 size={24} />
           </div>
           <div>
-            <div className="text-2xl font-bold text-white">{tracks.length}</div>
-            <div className="text-xs text-[#789d9a]">Vaulted Tracks</div>
+            <div className="text-2xl font-bold text-white font-mono">{tracks.length}</div>
+            <div className="text-xs text-slate-400">Stored Library Tracks</div>
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#081a1e] border border-[#153a43] flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-purple-500/15 flex items-center justify-center text-purple-400">
+        <div className="p-5 rounded-2xl bg-[#090d16] border border-slate-800/80 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
             <Disc size={24} />
           </div>
           <div>
-            <div className="text-2xl font-bold text-white">{playlists.length}</div>
-            <div className="text-xs text-[#789d9a]">Custom Playlists</div>
+            <div className="text-2xl font-bold text-white font-mono">{playlists.length}</div>
+            <div className="text-xs text-slate-400">Curated Playlists</div>
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#081a1e] border border-[#153a43] flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-400">
+        <div className="p-5 rounded-2xl bg-[#090d16] border border-slate-800/80 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
             <HardDrive size={24} />
           </div>
           <div>
-            <div className="text-2xl font-bold text-white">IndexedDB</div>
-            <div className="text-xs text-[#789d9a]">Encrypted Local Cache</div>
+            <div className="text-2xl font-bold text-white font-mono">Lossless</div>
+            <div className="text-xs text-slate-400">IndexedDB Client Cache</div>
           </div>
         </div>
       </div>
 
-      {/* Filter and Tab Strip */}
+      {/* Interactive Tabs Strip */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-1.5 bg-[#091b20] p-1.5 rounded-2xl border border-[#163942] w-full sm:w-auto">
+        <div className="flex items-center gap-1 p-1 bg-slate-900/80 rounded-xl border border-slate-800 w-full sm:w-auto">
           <button
             onClick={() => setActiveTab('tracks')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex-1 sm:flex-initial ${
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
               activeTab === 'tracks'
-                ? 'bg-[#48e4ff] text-black shadow-md'
-                : 'text-zinc-400 hover:text-white'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-white'
             }`}
           >
             All Tracks ({tracks.length})
           </button>
           <button
             onClick={() => setActiveTab('playlists')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex-1 sm:flex-initial ${
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
               activeTab === 'playlists'
-                ? 'bg-[#48e4ff] text-black shadow-md'
-                : 'text-zinc-400 hover:text-white'
+                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-white'
             }`}
           >
             Playlists ({playlists.length})
           </button>
+          <button
+            onClick={() => setActiveTab('upload')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+              activeTab === 'upload'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Drop Audio Files
+          </button>
         </div>
 
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={15} />
-          <input
-            type="text"
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            placeholder="Filter library..."
-            className="w-full bg-[#07171a] border border-[#14343d] rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#48e4ff]"
-          />
-        </div>
+        {/* Search & Sort Controls */}
+        {activeTab === 'tracks' && (
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="relative flex-1 sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+              <input
+                type="text"
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                placeholder="Search tracks, artists..."
+                className="w-full bg-[#070b12] border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition"
+              />
+            </div>
+
+            {/* Sort Toggle */}
+            <div className="flex items-center gap-1 bg-[#070b12] border border-slate-800 rounded-xl px-2 py-1">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortField)}
+                className="bg-transparent text-xs text-slate-300 focus:outline-none cursor-pointer pr-1"
+              >
+                <option value="addedAt" className="bg-slate-900 text-white">Date Added</option>
+                <option value="title" className="bg-slate-900 text-white">Title</option>
+                <option value="artist" className="bg-slate-900 text-white">Artist</option>
+                <option value="duration" className="bg-slate-900 text-white">Duration</option>
+              </select>
+              <button
+                onClick={() => setSortAsc(!sortAsc)}
+                className="text-slate-400 hover:text-white p-1"
+                title={sortAsc ? 'Ascending' : 'Descending'}
+              >
+                <ArrowUpDown size={13} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Tracks Tab */}
+      {/* TRACKS TAB */}
       {activeTab === 'tracks' && (
-        <div className="border border-[#163842] rounded-3xl bg-[#061417] overflow-hidden shadow-xl">
-          {filteredTracks.length === 0 ? (
-            <div className="p-12 text-center text-zinc-500 text-xs font-mono">
-              No tracks in library yet. Add tracks from Spotify, YouTube, or Local Uploads.
+        <div className="space-y-4">
+          {/* Action Bar & Source Filters */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-[#080d16] p-3 rounded-2xl border border-slate-800/80">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handlePlayAll}
+                disabled={filteredTracks.length === 0}
+                className="px-4 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs rounded-xl transition flex items-center gap-2 shadow-lg shadow-cyan-950/40 cursor-pointer disabled:opacity-50"
+              >
+                <Play size={14} fill="currentColor" />
+                <span>Play All ({filteredTracks.length})</span>
+              </button>
+
+              <button
+                onClick={handleShufflePlay}
+                disabled={filteredTracks.length === 0}
+                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 text-xs font-semibold rounded-xl transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <Shuffle size={14} className="text-cyan-400" />
+                <span>Shuffle</span>
+              </button>
+            </div>
+
+            {/* Source Segmented Filters */}
+            <div className="flex items-center gap-1 text-xs">
+              {(['all', 'local', 'youtube', 'spotify', 'liked'] as SourceFilter[]).map((src) => (
+                <button
+                  key={src}
+                  onClick={() => setSourceFilter(src)}
+                  className={`px-3 py-1.5 rounded-lg transition capitalize font-medium cursor-pointer ${
+                    sourceFilter === src
+                      ? 'bg-slate-800 text-cyan-300 border border-slate-700'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {src === 'liked' ? 'Favorites' : src}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Track List */}
+          <div className="border border-slate-800/90 rounded-2xl bg-[#060a12] overflow-hidden shadow-2xl">
+            {filteredTracks.length === 0 ? (
+              <div className="p-16 text-center space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-500">
+                  <Music2 size={24} />
+                </div>
+                <h3 className="text-sm font-semibold text-slate-200">No tracks found</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  Drag audio files onto this tab, upload local tracks, or save songs from YouTube Music & Spotify to populate your Vault.
+                </p>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="mt-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl transition inline-flex items-center gap-2 cursor-pointer"
+                >
+                  <Upload size={14} />
+                  <span>Upload Local Audio</span>
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-800/50">
+                {filteredTracks.map((track, idx) => {
+                  const isCurrent = currentTrackId === track.id;
+                  return (
+                    <div
+                      key={track.id}
+                      onClick={() => onPlayTrack(track, filteredTracks)}
+                      className={`p-3 px-5 flex items-center justify-between cursor-pointer transition group ${
+                        isCurrent
+                          ? 'bg-cyan-950/20 text-white'
+                          : 'hover:bg-slate-900/60 text-slate-300'
+                      }`}
+                    >
+                      {/* Left: Index / Play Status + Artwork + Title */}
+                      <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                        <div className="w-6 text-center font-mono text-xs text-slate-500 shrink-0">
+                          {isCurrent && isPlaying ? (
+                            <div className="flex items-end justify-center gap-0.5 h-3.5">
+                              <span className="w-0.5 bg-cyan-400 rounded-full equalizer-bar-1" />
+                              <span className="w-0.5 bg-sky-300 rounded-full equalizer-bar-2" />
+                              <span className="w-0.5 bg-emerald-400 rounded-full equalizer-bar-3" />
+                            </div>
+                          ) : (
+                            <span className="group-hover:hidden">{idx + 1}</span>
+                          )}
+                          <Play
+                            size={13}
+                            fill="currentColor"
+                            className="hidden group-hover:inline-block text-cyan-400 mx-auto"
+                          />
+                        </div>
+
+                        {track.artwork ? (
+                          <img
+                            src={track.artwork}
+                            alt={track.title}
+                            className="w-10 h-10 rounded-lg object-cover shrink-0 border border-slate-800 shadow-sm"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-cyan-400 shrink-0">
+                            <Disc size={18} />
+                          </div>
+                        )}
+
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-xs font-bold truncate ${isCurrent ? 'text-cyan-300' : 'text-slate-100 group-hover:text-cyan-300'} transition-colors`}>
+                            {track.title}
+                          </div>
+                          <div className="text-[11px] text-slate-400 truncate mt-0.5 flex items-center gap-1.5">
+                            <span>{track.artist}</span>
+                            {track.source && (
+                              <>
+                                <span aria-hidden="true" className="text-slate-600">·</span>
+                                <span className="capitalize text-slate-500 text-[10px]">{track.source}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Actions & Duration */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs font-mono text-slate-500 w-12 text-right">
+                          {track.durationText || formatTime(track.duration)}
+                        </span>
+
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddToQueue(track);
+                              showToast(`Added "${track.title}" to Queue`);
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                            title="Add to Playback Queue"
+                          >
+                            <ListPlus size={15} />
+                          </button>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAddToPlaylistTrack(track);
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-purple-300 hover:bg-slate-800 transition"
+                            title="Add to Playlist"
+                          >
+                            <Plus size={15} />
+                          </button>
+
+                          <button
+                            onClick={(e) => handleDeleteTrack(track.id, e)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition"
+                            title="Delete from Vault"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PLAYLISTS TAB */}
+      {activeTab === 'playlists' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-200">
+              Custom Playlists ({playlists.length})
+            </h2>
+            <button
+              onClick={() => setShowCreatePlaylistModal(true)}
+              className="px-3.5 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus size={14} />
+              <span>Create Playlist</span>
+            </button>
+          </div>
+
+          {playlists.length === 0 ? (
+            <div className="p-16 border border-slate-800/80 rounded-2xl bg-[#060a12] text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-purple-950/30 border border-purple-800/40 flex items-center justify-center mx-auto text-purple-400">
+                <Disc size={24} />
+              </div>
+              <h3 className="text-sm font-semibold text-slate-200">No playlists yet</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                Group your favorite tracks into offline-synced mixes with continuous playback.
+              </p>
+              <button
+                onClick={() => setShowCreatePlaylistModal(true)}
+                className="mt-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus size={14} />
+                <span>Create First Playlist</span>
+              </button>
             </div>
           ) : (
-            <div className="divide-y divide-[#10272e]">
-              {filteredTracks.map((track, idx) => {
-                const isCurrent = currentTrackId === track.id;
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {playlists.map((pl) => {
+                const plTracks = tracks.filter((t) => pl.trackIds.includes(t.id));
+                const totalDuration = plTracks.reduce((sum, t) => sum + (t.duration || 0), 0);
+
                 return (
                   <div
-                    key={track.id}
-                    onClick={() => onPlayTrack(track, filteredTracks)}
-                    className={`p-3.5 px-6 flex items-center justify-between cursor-pointer transition ${
-                      isCurrent
-                        ? 'bg-[#123842] text-white font-bold'
-                        : 'hover:bg-[#091f24] text-zinc-300'
-                    }`}
+                    key={pl.id}
+                    className="p-5 rounded-2xl bg-[#080d16] border border-slate-800 hover:border-purple-500/50 transition-all flex flex-col justify-between shadow-xl group"
                   >
-                    <div className="flex items-center gap-4 min-w-0 flex-1">
-                      <span className="text-xs font-mono text-zinc-500 w-8">
-                        {isCurrent && isPlaying ? (
-                          <span className="w-2 h-2 rounded-full bg-[#48e4ff] inline-block animate-ping" />
-                        ) : (
-                          idx + 1
-                        )}
-                      </span>
-                      {track.artwork && (
-                        <img
-                          src={track.artwork}
-                          alt={track.title}
-                          className="w-10 h-10 rounded-lg object-cover shrink-0 border border-zinc-800"
-                        />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs font-bold truncate text-white">{track.title}</div>
-                        <div className="text-[11px] text-zinc-400 truncate mt-0.5">{track.artist}</div>
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                          <Disc size={15} className="text-purple-400" />
+                          <span>{pl.trackIds.length} tracks</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{formatTime(totalDuration)}</span>
+                        </div>
+
+                        <button
+                          onClick={(e) => handleDeletePlaylist(pl.id, e)}
+                          className="text-slate-500 hover:text-rose-400 transition p-1"
+                          title="Delete Playlist"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+
+                      <h3 className="font-bold text-base text-white truncate group-hover:text-purple-300 transition-colors">
+                        {pl.name}
+                      </h3>
+
+                      <div className="text-[11px] text-slate-500 font-mono mt-1">
+                        Created {new Date(pl.createdAt).toLocaleDateString()}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-4">
-                      <span className="text-xs font-mono text-zinc-400">{track.durationText}</span>
+                    <div className="mt-6 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+                      <div className="flex -space-x-1.5 overflow-hidden">
+                        {plTracks.slice(0, 4).map((t, i) => (
+                          <img
+                            key={t.id}
+                            src={t.artwork || '/favicon.ico'}
+                            alt=""
+                            className="w-6 h-6 rounded-full border border-slate-900 object-cover"
+                          />
+                        ))}
+                      </div>
+
                       <button
-                        onClick={(e) => handleDeleteTrack(track.id, e)}
-                        className="p-2 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-rose-950/40 transition"
-                        title="Delete from Vault"
+                        onClick={() => handlePlayPlaylist(pl)}
+                        disabled={plTracks.length === 0}
+                        className="px-3.5 py-1.5 bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-md shadow-purple-950/40 cursor-pointer disabled:opacity-40"
                       >
-                        <Trash2 size={14} />
+                        <Play size={12} fill="currentColor" />
+                        <span>Play Mix</span>
                       </button>
                     </div>
                   </div>
@@ -266,81 +799,153 @@ export const VaultMain: React.FC<VaultMainProps> = ({
         </div>
       )}
 
-      {/* Playlists Tab */}
-      {activeTab === 'playlists' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {playlists.map((pl) => (
-            <div
-              key={pl.id}
-              className="p-5 rounded-3xl bg-[#07171a] border border-[#15343c] hover:border-[#48e4ff]/60 transition flex flex-col justify-between shadow-xl"
-            >
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-purple-950/40 text-purple-400 border border-purple-500/40 font-bold">
-                    {pl.source}
-                  </span>
-                  <button
-                    onClick={(e) => handleDeletePlaylist(pl.id, e)}
-                    className="text-zinc-500 hover:text-rose-400 transition"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                <h3 className="font-bold text-base text-white truncate">{pl.name}</h3>
-                <p className="text-xs text-zinc-400 mt-1">{pl.trackIds.length} tracks included</p>
-              </div>
+      {/* DROP AUDIO TAB */}
+      {activeTab === 'upload' && (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDraggingOver(true);
+          }}
+          onDragLeave={() => setIsDraggingOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDraggingOver(false);
+            if (e.dataTransfer.files) {
+              processAudioFiles(e.dataTransfer.files);
+            }
+          }}
+          className={`p-12 border-2 border-dashed rounded-3xl text-center transition-all ${
+            isDraggingOver
+              ? 'border-cyan-400 bg-cyan-950/20'
+              : 'border-slate-800 bg-[#070b13] hover:border-slate-700'
+          }`}
+        >
+          <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto mb-4">
+            <FileAudio size={32} />
+          </div>
 
-              <div className="mt-6 pt-3 border-t border-[#122c33] flex items-center justify-between">
-                <span className="text-[11px] font-mono text-zinc-500">
-                  {new Date(pl.createdAt).toLocaleDateString()}
-                </span>
-                <button
-                  onClick={() => {
-                    const plTracks = tracks.filter((t) => pl.trackIds.includes(t.id));
-                    if (plTracks.length > 0) onPlayTrack(plTracks[0], plTracks);
-                  }}
-                  className="px-3 py-1.5 bg-[#48e4ff] text-black font-bold text-xs rounded-xl flex items-center gap-1 shadow-md shadow-cyan-950/40"
-                >
-                  <Play size={12} className="fill-current" />
-                  <span>Play</span>
-                </button>
-              </div>
-            </div>
-          ))}
+          <h3 className="text-lg font-bold text-white mb-2">
+            Drag & Drop Audio Files Here
+          </h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto mb-6 leading-relaxed">
+            Support for MP3, WAV, FLAC, OGG, M4A, AAC, and Opus. Audio is decoded in browser and securely stored in your offline IndexedDB library.
+          </p>
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="px-6 py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-cyan-950/40 transition cursor-pointer disabled:opacity-50"
+          >
+            {isUploading ? 'Importing Audio...' : 'Select Audio Files'}
+          </button>
         </div>
       )}
 
       {/* Create Playlist Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      {showCreatePlaylistModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <form
             onSubmit={handleCreatePlaylist}
-            className="p-6 rounded-3xl bg-[#091b20] border border-[#1a3f4a] max-w-sm w-full shadow-2xl space-y-4"
+            className="p-6 rounded-3xl bg-[#090e18] border border-slate-800 max-w-sm w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-200"
           >
-            <h3 className="text-lg font-bold text-white">Create New Vault Playlist</h3>
+            <h3 className="text-base font-bold text-white">Create New Vault Playlist</h3>
             <input
               type="text"
               value={newPlaylistName}
               onChange={(e) => setNewPlaylistName(e.target.value)}
-              placeholder="Playlist name..."
-              className="w-full bg-[#061215] border border-[#183a44] rounded-xl px-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#48e4ff]"
+              placeholder="e.g., Midnight Synthwave..."
+              autoFocus
+              className="w-full bg-[#05080e] border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition"
             />
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setShowCreateModal(false)}
-                className="px-4 py-2 rounded-xl text-xs text-zinc-400 hover:text-white"
+                onClick={() => {
+                  setShowCreatePlaylistModal(false);
+                  setAddToPlaylistTrack(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-[#48e4ff] text-black font-bold text-xs rounded-xl"
+                className="px-5 py-2 bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition"
               >
                 Create
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Add Track to Playlist Modal */}
+      {addToPlaylistTrack && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="p-6 rounded-3xl bg-[#090e18] border border-slate-800 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div>
+                <h3 className="text-base font-bold text-white">Add to Playlist</h3>
+                <p className="text-xs text-slate-400 truncate max-w-xs mt-0.5">
+                  {addToPlaylistTrack.title}
+                </p>
+              </div>
+              <button
+                onClick={() => setAddToPlaylistTrack(null)}
+                className="text-slate-500 hover:text-white text-xs"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {playlists.length === 0 ? (
+                <div className="text-xs text-slate-500 text-center py-6">
+                  No playlists yet. Create a playlist first!
+                </div>
+              ) : (
+                playlists.map((pl) => {
+                  const inPl = pl.trackIds.includes(addToPlaylistTrack.id);
+                  return (
+                    <div
+                      key={pl.id}
+                      onClick={() => handleToggleTrackInPlaylist(pl, addToPlaylistTrack.id)}
+                      className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                        inPl
+                          ? 'bg-purple-950/30 border-purple-500/50 text-white'
+                          : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-xs font-semibold">{pl.name}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          {pl.trackIds.length} tracks
+                        </div>
+                      </div>
+
+                      {inPl && <Check size={16} className="text-purple-400" />}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-slate-800 flex justify-between items-center">
+              <button
+                onClick={() => setShowCreatePlaylistModal(true)}
+                className="text-xs text-purple-400 hover:text-purple-300 font-semibold"
+              >
+                + Create New Playlist
+              </button>
+
+              <button
+                onClick={() => setAddToPlaylistTrack(null)}
+                className="px-4 py-2 bg-slate-800 text-white text-xs font-semibold rounded-xl"
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
