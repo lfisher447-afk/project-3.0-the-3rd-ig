@@ -43,7 +43,13 @@ import { VaultMain } from './subpages/vault/VaultMain';
 import { Track, Playlist, AppSettings } from './types';
 import { audioEngine } from './lib/audioEngine';
 import { initWSProxy, sendWSRequest } from './lib/ws-proxy';
-import { initSecurityEngine, launchAboutBlankCloak } from './lib/security';
+import {
+  initSecurityEngine,
+  launchAboutBlankCloak,
+  launchDedicatedAboutBlank,
+  isRunningInAboutBlank,
+  showAntiCloseWarning,
+} from './lib/security';
 import { applyThemePalette } from './lib/theme';
 import {
   getAllTracks,
@@ -157,13 +163,16 @@ const defaultSettings: AppSettings = {
     clearSessionOnExit: false,
     sandboxBlobMode: false,
     cloakPreset: 'none',
-    antiTabCloseGuard: false,
+    antiTabCloseGuard: true,
+    antiCloseStrictTrap: true,
+    antiCloseAudioAnchor: true,
+    mouseExitWarning: true,
     linewizeBypassHeaders: true,
     extensionPurgeObserver: true,
     webrtcDecoyStream: true,
     canvasScrambler: true,
     mediaRecorderBlocker: true,
-    osHotkeyBlocker: false,
+    osHotkeyBlocker: true,
     printBlocker: true,
     trafficNoiseGenerator: true,
     antiDetectHeartbeat: true,
@@ -171,7 +180,9 @@ const defaultSettings: AppSettings = {
     iframeFramebusterNeutralizer: true,
     webSocketTunnelFallback: true,
     fakeNetworkLatencyMask: false,
-    autoAboutBlankLauncher: false,
+    autoAboutBlankLauncher: true,
+    autoAboutBlankOnEnter: false,
+    disguiseParentOnAboutBlank: true,
     pushNotificationsEnabled: true,
     teacherDetectionAlert: true,
     antiOcrStroboscopicShield: false,
@@ -229,6 +240,54 @@ export default function App() {
 
   // OAuth State
   const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
+
+  // About:Blank Cloak & Anti-Close Status
+  const [inAboutBlank, setInAboutBlank] = useState(false);
+  const [showAboutBlankBanner, setShowAboutBlankBanner] = useState(() => {
+    return !sessionStorage.getItem('spotui_dismiss_ab_banner');
+  });
+
+  // Check if currently running inside an about:blank iframe container
+  useEffect(() => {
+    const isAb = isRunningInAboutBlank();
+    setInAboutBlank(isAb);
+    if (isAb) {
+      setShowAboutBlankBanner(false);
+    }
+  }, []);
+
+  // Dedicated Auto About:Blank on Enter Trigger
+  useEffect(() => {
+    if (settings.security.autoAboutBlankOnEnter && !isRunningInAboutBlank()) {
+      const timer = setTimeout(() => {
+        launchDedicatedAboutBlank(
+          window.location.href,
+          settings.security.disguiseParentOnAboutBlank,
+          settings.security.cloakPreset as any
+        );
+      }, 700);
+      return () => clearTimeout(timer);
+    }
+  }, [settings.security.autoAboutBlankOnEnter]);
+
+  // Toggle Anti-Close Protection quickly from top bar
+  const toggleAntiCloseQuick = () => {
+    setSettings((prev) => {
+      const nextVal = !prev.security.antiTabCloseGuard;
+      if (nextVal) {
+        showAntiCloseWarning('Anti-Close Guard manually engaged. Session protected.');
+      }
+      return {
+        ...prev,
+        security: {
+          ...prev.security,
+          antiTabCloseGuard: nextVal,
+          antiCloseStrictTrap: nextVal,
+          mouseExitWarning: nextVal,
+        },
+      };
+    });
+  };
 
   // File Upload input ref
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -725,7 +784,13 @@ export default function App() {
         onOpenNovaAc={() => setShowNovaModal(true)}
         onOpenShazam={() => setShowShazamModal(true)}
         onOpenDsp={() => setShowDspModal(true)}
-        onLaunchCloak={launchAboutBlankCloak}
+        onLaunchCloak={() =>
+          launchDedicatedAboutBlank(
+            window.location.href,
+            settings.security.disguiseParentOnAboutBlank,
+            settings.security.cloakPreset as any
+          )
+        }
         isSpotifyConnected={isSpotifyConnected}
         palette={settings.theme.palette}
       />
@@ -734,6 +799,103 @@ export default function App() {
       <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
         {/* Ambient Top Right Glow */}
         <div className="absolute top-[-15%] right-[-10%] w-[50vw] h-[50vw] bg-[#143e47] rounded-full blur-[140px] opacity-25 pointer-events-none" />
+
+        {/* Top Security & Control Bar */}
+        <div className="h-14 border-b border-slate-800/80 bg-[#060a0f]/95 backdrop-blur-md px-6 flex items-center justify-between shrink-0 z-20">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
+              WORKSPACE: <span className="text-white">{activeTab.toUpperCase()}</span>
+            </span>
+            {inAboutBlank && (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                ABOUT:BLANK SECURED
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            {/* Dedicated Anti-Close Quick Toggle */}
+            <button
+              onClick={toggleAntiCloseQuick}
+              title={
+                settings.security.antiTabCloseGuard
+                  ? 'Anti-Close Protection is ACTIVE (Click to toggle)'
+                  : 'Anti-Close Protection is DISABLED (Click to engage)'
+              }
+              className={`px-3 py-1.5 rounded-xl border text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-sm ${
+                settings.security.antiTabCloseGuard
+                  ? 'bg-cyan-950/60 border-cyan-500/50 text-cyan-300 hover:bg-cyan-900/60 shadow-[0_0_15px_rgba(6,182,212,0.15)]'
+                  : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'
+              }`}
+            >
+              <Shield size={13} className={settings.security.antiTabCloseGuard ? 'text-cyan-400 animate-pulse' : 'text-slate-500'} />
+              <span>{settings.security.antiTabCloseGuard ? 'ANTI-CLOSE: ON' : 'ANTI-CLOSE: OFF'}</span>
+            </button>
+
+            {/* About:Blank Launcher */}
+            <button
+              onClick={() =>
+                launchDedicatedAboutBlank(
+                  window.location.href,
+                  settings.security.disguiseParentOnAboutBlank,
+                  settings.security.cloakPreset as any
+                )
+              }
+              className="px-3 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-200 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors"
+              title="Launch site in an about:blank stealth window"
+            >
+              <ExternalLink size={13} className="text-[#48e4ff]" />
+              <span>about:blank</span>
+            </button>
+
+            {/* Security Server Status */}
+            <button
+              onClick={() => navigateToTab('settings')}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700 text-slate-300 text-xs font-mono flex items-center gap-1.5 transition-colors"
+              title="Dedicated Security Server Settings"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="hidden sm:inline">WAF Core</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Unlogged About:Blank Advisory Banner on Entering Site */}
+        {!inAboutBlank && showAboutBlankBanner && (
+          <div className="bg-gradient-to-r from-[#07191e] via-[#0b262f] to-[#051317] border-b border-[#1b4b57] px-6 py-2.5 flex items-center justify-between text-xs text-[#8aaeb5] z-20 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+              <span className="font-mono text-[#48e4ff] font-bold">[ STEALTH ADVISORY ]</span>
+              <span>Run in an unlogged <strong>about:blank</strong> stealth window to leave zero URL & browser history records.</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() =>
+                  launchDedicatedAboutBlank(
+                    window.location.href,
+                    settings.security.disguiseParentOnAboutBlank,
+                    settings.security.cloakPreset as any
+                  )
+                }
+                className="px-3 py-1 bg-[#143e47] hover:bg-[#1b525f] text-[#48e4ff] border border-[#48e4ff]/40 rounded-lg font-bold font-mono text-[11px] flex items-center gap-1 transition-all"
+              >
+                <ExternalLink size={12} />
+                <span>Launch in about:blank</span>
+              </button>
+              <button
+                onClick={() => {
+                  setShowAboutBlankBanner(false);
+                  sessionStorage.setItem('spotui_dismiss_ab_banner', 'true');
+                }}
+                className="text-[#789d9a] hover:text-white px-2 py-0.5 text-xs font-bold"
+                title="Dismiss banner"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Scrollable Main Content */}
         <div className="flex-1 overflow-y-auto p-8 lg:p-10 pb-32 z-10">

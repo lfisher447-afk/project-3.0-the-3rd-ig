@@ -7,6 +7,7 @@ import { Innertube, UniversalCache } from "youtubei.js";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { handleProxyRequest, turboCache } from "./server/proxyEngine.js";
+import { securityHeadersMiddleware, crawlerFirewallMiddleware, securityRouter } from "./server/securityServer.js";
 
 dotenv.config();
 
@@ -18,6 +19,11 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+  // Dedicated Security Web Server Middlewares (Anti-Fingerprint & School Crawler Defense)
+  app.use(securityHeadersMiddleware);
+  app.use(crawlerFirewallMiddleware);
+  app.use("/api/security", securityRouter);
 
   // CORS and iframe headers
   app.use((req, res, next) => {

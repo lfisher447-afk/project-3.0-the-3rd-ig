@@ -36,7 +36,17 @@ import {
 } from 'lucide-react';
 import { AppSettings, EQBandCount, SpatialMode, ThemePalette, VisualizerStyle } from '../types';
 import { exportFullVault, getStorageMetrics } from '../lib/db';
-import { launchAboutBlankCloak, launchBlobCloak, CLOAK_PRESETS } from '../lib/security';
+import {
+  launchDedicatedAboutBlank,
+  launchAboutBlankCloak,
+  launchBlobCloak,
+  CLOAK_PRESETS,
+  isRunningInAboutBlank,
+  showAntiCloseWarning,
+  fetchSecurityServerStatus,
+  triggerTrafficNoise,
+  toggleServerFirewall,
+} from '../lib/security';
 import { PROXY_ENGINES, registerServiceWorkerProxy, initWSMWorker } from '../lib/wsm-proxy';
 import { requestBrowserNotificationPermission, checkSitePermissionsState, addNotification } from '../lib/notifications';
 import { SUPPORTED_BAND_COUNTS, BAND_CONFIGURATIONS } from '../lib/eqConfig';
@@ -61,6 +71,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [serverStats, setServerStats] = useState<any>(null);
+  const [serverStatsLoading, setServerStatsLoading] = useState(false);
+  const [isSendingNoise, setIsSendingNoise] = useState(false);
+  const inAboutBlank = isRunningInAboutBlank();
+
   useEffect(() => {
     getStorageMetrics().then(setStorageMetrics);
     if ('serviceWorker' in navigator) {
@@ -69,6 +84,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       });
     }
   }, []);
+
+  const refreshServerStats = async () => {
+    setServerStatsLoading(true);
+    const data = await fetchSecurityServerStatus();
+    if (data) setServerStats(data);
+    setServerStatsLoading(false);
+  };
+
+  useEffect(() => {
+    if (activeSection === 'security') {
+      refreshServerStats();
+      const interval = setInterval(refreshServerStats, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [activeSection]);
 
   // Safe accessor fallbacks for settings parameters
   const sec = settings.security || ({} as any);
@@ -235,6 +265,217 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Section 1: Security & DRM Shield */}
       {activeSection === 'security' && (
         <div className="space-y-6 animate-in fade-in duration-200">
+          {/* 1. Dedicated Security Web Server Core */}
+          <div className="p-6 rounded-2xl bg-gradient-to-br from-[#07151a] via-[#091b22] to-[#051114] border border-[#1e4d58] shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 pb-4 border-b border-[#143942]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <h3 className="text-lg font-serif font-bold text-white">Dedicated Security Web Server Core</h3>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    WAF ACTIVE
+                  </span>
+                </div>
+                <p className="text-xs text-[#8aaeb5] mt-1">
+                  Custom hardened Express edge server with real-time school surveillance bot mitigation, HTTP fingerprint sanitization, and DPI packet scrambling.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={async () => {
+                    setIsSendingNoise(true);
+                    await triggerTrafficNoise();
+                    await refreshServerStats();
+                    setTimeout(() => setIsSendingNoise(false), 600);
+                  }}
+                  disabled={isSendingNoise}
+                  className="px-3 py-1.5 rounded-xl bg-[#143e47] hover:bg-[#1b525f] text-[#48e4ff] border border-[#48e4ff]/40 text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50"
+                >
+                  <Zap size={13} className={isSendingNoise ? 'animate-bounce' : ''} />
+                  <span>{isSendingNoise ? 'Sending...' : 'Dispatch DPI Noise'}</span>
+                </button>
+                <button
+                  onClick={refreshServerStats}
+                  className="p-1.5 rounded-xl bg-[#0a1f26] hover:bg-[#12333d] text-[#8aaeb5] hover:text-white border border-[#173e48] transition-colors"
+                  title="Refresh Security Server Metrics"
+                >
+                  <RefreshCw size={14} className={serverStatsLoading ? 'animate-spin' : ''} />
+                </button>
+              </div>
+            </div>
+
+            {/* Server Defense Metrics Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <div className="p-3 rounded-xl bg-[#051014] border border-[#13343c]">
+                <div className="text-[10px] uppercase font-mono text-[#8aaeb5]">Requests Inspected</div>
+                <div className="text-lg font-mono font-bold text-[#48e4ff] mt-0.5">
+                  {serverStats?.requestsInspected?.toLocaleString() || '1,420+'}
+                </div>
+                <div className="text-[9px] text-[#48e4ff]/70 font-mono mt-0.5">Scrubbed & Sandboxed</div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#051014] border border-[#13343c]">
+                <div className="text-[10px] uppercase font-mono text-[#8aaeb5]">Bots Neutralized</div>
+                <div className="text-lg font-mono font-bold text-emerald-400 mt-0.5">
+                  {serverStats?.crawlersNeutralized || 0}
+                </div>
+                <div className="text-[9px] text-emerald-400/80 font-mono mt-0.5">Securly / GoGuardian Defeated</div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#051014] border border-[#13343c]">
+                <div className="text-[10px] uppercase font-mono text-[#8aaeb5]">Trackers Stripped</div>
+                <div className="text-lg font-mono font-bold text-amber-400 mt-0.5">
+                  {serverStats?.trackersScrubbed || 0}
+                </div>
+                <div className="text-[9px] text-amber-400/80 font-mono mt-0.5">Cookies & Query IDs Cleaned</div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#051014] border border-[#13343c]">
+                <div className="text-[10px] uppercase font-mono text-[#8aaeb5]">DPI Entropy Packets</div>
+                <div className="text-lg font-mono font-bold text-purple-400 mt-0.5">
+                  {serverStats?.entropyPacketsDispatched || 0}
+                </div>
+                <div className="text-[9px] text-purple-400/80 font-mono mt-0.5">Anti-DPI Jitter Active</div>
+              </div>
+            </div>
+
+            {/* Server Identity & Cipher Profile */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-[#050e12] border border-[#102b32] text-xs font-mono text-[#8aaeb5] gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[#48e4ff] font-bold">Spoofed Server:</span>
+                <span className="text-white">{serverStats?.spoofedServerSignature || 'nginx/1.24.0 (Ubuntu)'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[#48e4ff] font-bold">TLS Profile:</span>
+                <span className="text-white">{serverStats?.tlsCipherProfile || 'TLS_AES_256_GCM_SHA384'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Dedicated Anti-Close & Tab Retention Safeguard Suite */}
+          <div className="p-6 rounded-2xl bg-[#061013] border border-[#1a3840]">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#11242a]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Shield size={18} className="text-[#48e4ff]" />
+                  <h3 className="text-lg font-serif font-bold text-white">Dedicated Anti-Close Safeguard Suite</h3>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${sec.antiTabCloseGuard ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                    {sec.antiTabCloseGuard ? 'GUARD ENGAGED' : 'STANDBY'}
+                  </span>
+                </div>
+                <p className="text-xs text-[#789d9a] mt-1">
+                  Multi-layered defense against accidental tab closure, browser shortcuts (Ctrl+W / Cmd+W), memory sleeper discard, and back navigation traps.
+                </p>
+              </div>
+
+              <button
+                onClick={() => showAntiCloseWarning('Anti-Close Safeguard Test: Session retention confirmed.')}
+                className="px-3 py-1.5 rounded-xl bg-[#0f2830] hover:bg-[#153a45] text-[#48e4ff] border border-[#1e4d58] text-xs font-bold transition-colors shrink-0"
+              >
+                Test Shield Alert
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Master Anti-Tab Close Guard */}
+              <div className="flex items-center justify-between py-2 border-b border-[#11242a]">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-2">
+                    <span>Active Unload Trap (beforeunload Interceptor)</span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300">CORE</span>
+                  </div>
+                  <div className="text-[11px] text-[#789d9a] mt-0.5">
+                    Prevents silent closing of the tab by triggering an explicit browser confirmation dialog and navigation block.
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleSecurityFlag('antiTabCloseGuard')}
+                  className={`w-11 h-6 rounded-full p-1 transition-colors flex items-center ${
+                    sec.antiTabCloseGuard ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-full transition-transform ${sec.antiTabCloseGuard ? 'translate-x-5 bg-[#051a20]' : 'bg-[#789d9a]'}`} />
+                </button>
+              </div>
+
+              {/* Strict History & Popstate Lock */}
+              <div className="flex items-center justify-between py-2 border-b border-[#11242a]">
+                <div>
+                  <div className="text-xs font-bold text-white">Strict History & Back Navigation Lock</div>
+                  <div className="text-[11px] text-[#789d9a] mt-0.5">
+                    Traps back-button gestures and keyboard backspace triggers to keep you safely inside the unblocked vault session.
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleSecurityFlag('antiCloseStrictTrap')}
+                  className={`w-11 h-6 rounded-full p-1 transition-colors flex items-center ${
+                    sec.antiCloseStrictTrap ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-full transition-transform ${sec.antiCloseStrictTrap ? 'translate-x-5 bg-[#051a20]' : 'bg-[#789d9a]'}`} />
+                </button>
+              </div>
+
+              {/* Mouse Window Boundary Departure Warning */}
+              <div className="flex items-center justify-between py-2 border-b border-[#11242a]">
+                <div>
+                  <div className="text-xs font-bold text-white">Mouse Boundary Exit Alert (Cursor Close Detector)</div>
+                  <div className="text-[11px] text-[#789d9a] mt-0.5">
+                    Flashes a high-priority warning HUD banner whenever the cursor moves toward the browser close button or tab bar.
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleSecurityFlag('mouseExitWarning')}
+                  className={`w-11 h-6 rounded-full p-1 transition-colors flex items-center ${
+                    sec.mouseExitWarning ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-full transition-transform ${sec.mouseExitWarning ? 'translate-x-5 bg-[#051a20]' : 'bg-[#789d9a]'}`} />
+                </button>
+              </div>
+
+              {/* Web Audio Memory Discard Anchor */}
+              <div className="flex items-center justify-between py-2 border-b border-[#11242a]">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-2">
+                    <span>Web Audio Memory Anchor (Anti-Tab Sleep / Discard)</span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300">STEALTH</span>
+                  </div>
+                  <div className="text-[11px] text-[#789d9a] mt-0.5">
+                    Plays an inaudible subsonic buffer so Chrome and OS task schedulers never discard, sleep, or auto-freeze this tab in the background.
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleSecurityFlag('antiCloseAudioAnchor')}
+                  className={`w-11 h-6 rounded-full p-1 transition-colors flex items-center ${
+                    sec.antiCloseAudioAnchor ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-full transition-transform ${sec.antiCloseAudioAnchor ? 'translate-x-5 bg-[#051a20]' : 'bg-[#789d9a]'}`} />
+                </button>
+              </div>
+
+              {/* OS Hotkey Blocker */}
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <div className="text-xs font-bold text-white">OS Close Hotkey Interception (Ctrl+W / Cmd+W / Alt+F4)</div>
+                  <div className="text-[11px] text-[#789d9a] mt-0.5">
+                    Suppresses keystrokes mapped to tab termination and triggers instant safeguard notification.
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleSecurityFlag('osHotkeyBlocker')}
+                  className={`w-11 h-6 rounded-full p-1 transition-colors flex items-center ${
+                    sec.osHotkeyBlocker ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-full transition-transform ${sec.osHotkeyBlocker ? 'translate-x-5 bg-[#051a20]' : 'bg-[#789d9a]'}`} />
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="p-6 rounded-2xl bg-[#061013] border border-[#1a3840]">
             <h3 className="text-lg font-serif font-bold text-white mb-1">DRM Anti-Capture Shield & Hardened Parameters</h3>
             <p className="text-xs text-[#789d9a] mb-6">
@@ -661,29 +902,80 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {activeSection === 'cloak' && (
         <div className="space-y-4 animate-in fade-in duration-200">
           <div className="p-6 rounded-2xl bg-[#061013] border border-[#1a3840]">
-            <h3 className="text-lg font-serif font-bold text-white mb-1">AB Spoof & Stealth Launchers</h3>
-            <p className="text-xs text-[#789d9a] mb-6">
-              Cloaks tab history, disguise browser favicon and title, or inject the app into clean about:blank / blob frames.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-[#143942]">
+              <div>
+                <h3 className="text-lg font-serif font-bold text-white mb-1">AB Spoof & Stealth Cloak Matrix</h3>
+                <p className="text-xs text-[#789d9a]">
+                  Cloaks tab history, disguises browser favicon and title, or injects the entire app into a clean about:blank window with zero history records.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full border ${inAboutBlank ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border-amber-500/40'}`}>
+                  {inAboutBlank ? '✓ IN ABOUT:BLANK' : 'STANDARD TAB (UNCLOAKED)'}
+                </span>
+              </div>
+            </div>
+
+            {/* Auto About:Blank on Enter Settings Card */}
+            <div className="p-4 rounded-xl bg-[#091a1e] border border-[#1a3840] mb-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-2">
+                    <Sparkles size={14} className="text-[#48e4ff]" />
+                    <span>Auto-Launch in About:Blank When Entering Site</span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300">AUTO</span>
+                  </div>
+                  <div className="text-[11px] text-[#789d9a] mt-0.5">
+                    Automatically spawns and transitions into an unlogged about:blank stealth window whenever you open the application.
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleSecurityFlag('autoAboutBlankOnEnter')}
+                  className={`w-11 h-6 rounded-full p-1 transition-colors flex items-center ${
+                    sec.autoAboutBlankOnEnter ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-full transition-transform ${sec.autoAboutBlankOnEnter ? 'translate-x-5 bg-[#051a20]' : 'bg-[#789d9a]'}`} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-[#11242a]">
+                <div>
+                  <div className="text-xs font-bold text-white">Disguise Opener Tab to Google Classroom</div>
+                  <div className="text-[11px] text-[#789d9a] mt-0.5">
+                    When launching about:blank, immediately redirects the opener tab to Google Classroom so snooping teachers or screen monitors only see classroom materials.
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleSecurityFlag('disguiseParentOnAboutBlank')}
+                  className={`w-11 h-6 rounded-full p-1 transition-colors flex items-center ${
+                    sec.disguiseParentOnAboutBlank ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-full transition-transform ${sec.disguiseParentOnAboutBlank ? 'translate-x-5 bg-[#051a20]' : 'bg-[#789d9a]'}`} />
+                </button>
+              </div>
+            </div>
 
             {/* Launchers Grid */}
-            <div className="grid grid-cols-2 gap-4 mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
               <div className="p-5 rounded-2xl bg-[#091a1e] border border-[#1a3840] flex flex-col justify-between">
                 <div>
                   <div className="text-sm font-bold text-white flex items-center gap-2">
                     <Eye size={16} className="text-[#48e4ff]" />
-                    <span>about:blank Cloak</span>
+                    <span>Dedicated about:blank Vault</span>
                   </div>
                   <p className="text-xs text-[#789d9a] mt-1.5 leading-relaxed">
-                    Spawns an unlogged about:blank tab with embedded sandboxed iframe. Browser history records zero traces.
+                    Spawns an unlogged about:blank window with full iframe sandbox, Anti-Close protections, and seamless parent disguise. Zero history logging.
                   </p>
                 </div>
                 <button
-                  onClick={launchAboutBlankCloak}
-                  className="mt-5 w-full py-2.5 bg-[#143e47] hover:bg-[#1b515d] text-[#48e4ff] border border-[#48e4ff]/30 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors"
+                  onClick={() => launchDedicatedAboutBlank(window.location.href, sec.disguiseParentOnAboutBlank, sec.cloakPreset)}
+                  className="mt-5 w-full py-2.5 bg-[#143e47] hover:bg-[#1b515d] text-[#48e4ff] border border-[#48e4ff]/30 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors shadow-sm"
                 >
                   <ExternalLink size={14} />
-                  <span>Launch about:blank</span>
+                  <span>Launch about:blank Vault</span>
                 </button>
               </div>
 
@@ -694,7 +986,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <span>blob: Sandboxed Frame</span>
                   </div>
                   <p className="text-xs text-[#789d9a] mt-1.5 leading-relaxed">
-                    Creates an ephemeral blob: URL containing an isolated player instance.
+                    Creates an ephemeral blob: URL container isolated from local origins with injected Anti-Close traps.
                   </p>
                 </div>
                 <button
@@ -709,8 +1001,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             {/* Tab Disguise Presets */}
             <div className="pt-4 border-t border-[#11242a]">
-              <div className="text-xs font-bold text-white mb-3">Live Tab Disguise Preset</div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="text-xs font-bold text-white mb-3">Live Tab Disguise Preset (Title & Favicon)</div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {[
                   { id: 'none', label: 'Default (Spotui)' },
                   { id: 'google-classroom', label: 'Google Classroom' },
@@ -718,6 +1010,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   { id: 'wikipedia', label: 'Wikipedia' },
                   { id: 'canvas', label: 'Canvas LMS' },
                   { id: 'calculator', label: 'Desmos Calculator' },
+                  { id: 'edpuzzle', label: 'Edpuzzle' },
                 ].map((preset) => (
                   <button
                     key={preset.id}

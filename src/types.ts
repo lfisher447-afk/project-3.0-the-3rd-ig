@@ -110,6 +110,11 @@ export interface AppSettings {
     webSocketTunnelFallback: boolean;
     fakeNetworkLatencyMask: boolean;
     autoAboutBlankLauncher: boolean;
+    autoAboutBlankOnEnter: boolean;
+    disguiseParentOnAboutBlank: boolean;
+    antiCloseStrictTrap: boolean;
+    antiCloseAudioAnchor: boolean;
+    mouseExitWarning: boolean;
     pushNotificationsEnabled: boolean;
     teacherDetectionAlert: boolean;
     antiOcrStroboscopicShield: boolean;

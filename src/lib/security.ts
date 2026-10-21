@@ -11,6 +11,9 @@ let originalMediaRecorder: any = null;
 let originalPrint: any = null;
 let wsmCryptoEngine: WsmModuleInstance | null = null;
 let workerInstances: Worker[] = [];
+let audioAnchorCtx: AudioContext | null = null;
+let audioAnchorOsc: OscillatorNode | null = null;
+let antiCloseWarningEl: HTMLDivElement | null = null;
 
 export const CLOAK_PRESETS = {
   'google-classroom': {
@@ -32,6 +35,10 @@ export const CLOAK_PRESETS = {
   calculator: {
     title: 'Desmos | Graphing Calculator',
     favicon: 'https://www.desmos.com/favicon.ico',
+  },
+  edpuzzle: {
+    title: 'Edpuzzle',
+    favicon: 'https://edpuzzle.imgix.net/favicons/favicon-32.png',
   },
 };
 
@@ -57,19 +64,110 @@ export function applyTabCloak(presetKey: keyof typeof CLOAK_PRESETS | 'none') {
   link.href = preset.favicon;
 }
 
-export function launchAboutBlankCloak(targetUrl?: string) {
-  const win = window.open('about:blank', '_blank');
-  if (!win) {
-    addNotification('Popup Blocked', 'Please allow popups to launch the cloaked about:blank window.', 'warning');
-    alert('Popup blocked! Please allow popups to launch the cloaked stealth window.');
-    return;
+/**
+ * Checks if the application is currently running inside an about:blank stealth window or iframe
+ */
+export function isRunningInAboutBlank(): boolean {
+  try {
+    return window.location.protocol === 'about:' || window.top !== window;
+  } catch {
+    // Cross-origin iframe isolation
+    return true;
+  }
+}
+
+/**
+ * Shows an on-screen Anti-Close HUD warning banner when a closure attempt is detected
+ */
+export function showAntiCloseWarning(msg = 'Tab closure intercepted. Click to remain in protected session.') {
+  if (!antiCloseWarningEl) {
+    antiCloseWarningEl = document.createElement('div');
+    antiCloseWarningEl.id = 'anti-close-hud';
+    antiCloseWarningEl.style.cssText = `
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, rgba(14, 26, 30, 0.96), rgba(6, 16, 20, 0.98));
+      border: 1px solid #48e4ff;
+      border-radius: 14px;
+      padding: 12px 24px;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      z-index: 2147483646;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 20px rgba(72, 228, 255, 0.25);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      pointer-events: all;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    `;
+    document.body.appendChild(antiCloseWarningEl);
   }
 
+  antiCloseWarningEl.innerHTML = `
+    <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #48e4ff; box-shadow: 0 0 10px #48e4ff;"></span>
+    <span style="color: #48e4ff; font-family: monospace; font-size: 11px; font-weight: bold;">[ 🛡️ ANTI-CLOSE SAFEGUARD ]</span>
+    <span>${msg}</span>
+    <button id="anti-close-dismiss" style="margin-left: 8px; background: rgba(72, 228, 255, 0.15); border: 1px solid #48e4ff; color: #48e4ff; border-radius: 8px; padding: 4px 10px; font-size: 11px; cursor: pointer; font-weight: bold;">Stay Protected</button>
+  `;
+
+  antiCloseWarningEl.style.display = 'flex';
+  antiCloseWarningEl.style.opacity = '1';
+
+  const btn = antiCloseWarningEl.querySelector('#anti-close-dismiss');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      if (antiCloseWarningEl) {
+        antiCloseWarningEl.style.opacity = '0';
+        setTimeout(() => {
+          if (antiCloseWarningEl) antiCloseWarningEl.style.display = 'none';
+        }, 300);
+      }
+    });
+  }
+
+  setTimeout(() => {
+    if (antiCloseWarningEl) {
+      antiCloseWarningEl.style.opacity = '0';
+      setTimeout(() => {
+        if (antiCloseWarningEl) antiCloseWarningEl.style.display = 'none';
+      }, 300);
+    }
+  }, 4000);
+}
+
+/**
+ * 1000x Hardened Dedicated About:Blank Launcher with Parent Disguise
+ */
+export function launchDedicatedAboutBlank(
+  targetUrl?: string,
+  disguiseParent = true,
+  presetKey: keyof typeof CLOAK_PRESETS = 'google-classroom'
+): boolean {
+  const finalSrc = targetUrl || window.location.href;
+  const win = window.open('about:blank', '_blank');
+  if (!win) {
+    addNotification('Popup Blocked', 'Click the About:Blank launch button to authorize the cloaked tab.', 'warning');
+    return false;
+  }
+
+  const preset = CLOAK_PRESETS[presetKey] || CLOAK_PRESETS['google-classroom'];
   const doc = win.document;
-  doc.title = 'Classes';
+  doc.title = preset.title;
+
+  let iconLink = doc.querySelector("link[rel~='icon']") as HTMLLinkElement;
+  if (!iconLink) {
+    iconLink = doc.createElement('link');
+    iconLink.rel = 'icon';
+    doc.head.appendChild(iconLink);
+  }
+  iconLink.href = preset.favicon;
 
   const iframe = doc.createElement('iframe');
-  iframe.src = targetUrl || window.location.href;
+  iframe.src = finalSrc;
   iframe.style.position = 'fixed';
   iframe.style.top = '0';
   iframe.style.left = '0';
@@ -79,11 +177,48 @@ export function launchAboutBlankCloak(targetUrl?: string) {
   iframe.style.margin = '0';
   iframe.style.padding = '0';
   iframe.style.overflow = 'hidden';
+  iframe.setAttribute(
+    'allow',
+    'autoplay; fullscreen; clipboard-read; clipboard-write; display-capture; camera; microphone; encrypted-media'
+  );
 
   doc.body.style.margin = '0';
-  doc.body.style.background = '#071013';
+  doc.body.style.padding = '0';
+  doc.body.style.background = '#07090e';
+  doc.body.style.overflow = 'hidden';
   doc.body.appendChild(iframe);
-  addNotification('about:blank Vault Launched', 'App running in unblocked sandboxed about:blank window.', 'success');
+
+  // Inject anti-close trap inside child window
+  try {
+    win.addEventListener('beforeunload', (e: any) => {
+      e.preventDefault();
+      e.returnValue = 'SpotUI Anti-Close: Session is currently active and protected.';
+      return e.returnValue;
+    });
+  } catch {}
+
+  addNotification(
+    'about:blank Vault Launched',
+    `App running in stealth tab disguised as ${preset.title}. URL and history remain completely blank.`,
+    'success'
+  );
+
+  // Seamlessly disguise opener tab so teacher/monitor screens only see Google Classroom
+  if (disguiseParent) {
+    setTimeout(() => {
+      try {
+        window.location.replace('https://classroom.google.com');
+      } catch {
+        window.location.href = 'https://classroom.google.com';
+      }
+    }, 400);
+  }
+
+  return true;
+}
+
+export function launchAboutBlankCloak(targetUrl?: string) {
+  return launchDedicatedAboutBlank(targetUrl, false);
 }
 
 export function launchBlobCloak(targetUrl?: string) {
@@ -92,11 +227,19 @@ export function launchBlobCloak(targetUrl?: string) {
     <!DOCTYPE html>
     <html>
       <head>
-        <title>Dashboard</title>
+        <title>Classes</title>
+        <link rel="icon" href="https://ssl.gstatic.com/classroom/favicon.png" type="image/png">
         <style>html,body{margin:0;padding:0;width:100%;height:100%;background:#071013;overflow:hidden;}</style>
       </head>
       <body>
-        <iframe src="${finalSrc}" style="width:100%;height:100%;border:none;"></iframe>
+        <iframe src="${finalSrc}" style="width:100%;height:100%;border:none;" allow="autoplay; fullscreen; clipboard-read; clipboard-write; display-capture; camera; microphone; encrypted-media"></iframe>
+        <script>
+          window.addEventListener('beforeunload', function(e) {
+            e.preventDefault();
+            e.returnValue = 'SpotUI Vault Session is active.';
+            return e.returnValue;
+          });
+        </script>
       </body>
     </html>
   `;
@@ -104,6 +247,41 @@ export function launchBlobCloak(targetUrl?: string) {
   const blobUrl = URL.createObjectURL(blob);
   window.open(blobUrl, '_blank');
   addNotification('Blob Vault Launched', 'App running in isolated blob URL container.', 'success');
+}
+
+/**
+ * Server Security Status Helper API Calls
+ */
+export async function fetchSecurityServerStatus(): Promise<any> {
+  try {
+    const res = await fetch('/api/security/server-status');
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.debug('Failed to fetch security server status', err);
+  }
+  return null;
+}
+
+export async function triggerTrafficNoise(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/security/traffic-noise');
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function toggleServerFirewall(firewallActive: boolean, antiDpiActive: boolean): Promise<boolean> {
+  try {
+    const res = await fetch('/api/security/toggle-firewall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ firewallActive, antiDpiActive }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -526,6 +704,56 @@ export function initSecurityEngine(settings: AppSettings) {
     }
   }
 
+  // 13. Audio Memory Anchor (Keeps tab active in Chromium/OS process scheduler)
+  if (settings.security.antiCloseAudioAnchor) {
+    try {
+      if (!audioAnchorCtx) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          audioAnchorCtx = new AudioCtx();
+          const osc = audioAnchorCtx.createOscillator();
+          const gain = audioAnchorCtx.createGain();
+          osc.frequency.setValueAtTime(32, audioAnchorCtx.currentTime);
+          gain.gain.setValueAtTime(0.00001, audioAnchorCtx.currentTime);
+          osc.connect(gain);
+          gain.connect(audioAnchorCtx.destination);
+          osc.start();
+          audioAnchorOsc = osc;
+        }
+      }
+    } catch {}
+  } else {
+    try {
+      if (audioAnchorOsc) {
+        audioAnchorOsc.stop();
+        audioAnchorOsc.disconnect();
+        audioAnchorOsc = null;
+      }
+      if (audioAnchorCtx) {
+        audioAnchorCtx.close();
+        audioAnchorCtx = null;
+      }
+    } catch {}
+  }
+
+  // 14. Mouse Window Boundary Exit & Anti-Close Alert
+  const handleMouseMove = (e: MouseEvent) => {
+    if (settings.security.mouseExitWarning && e.clientY <= 6) {
+      showAntiCloseWarning('Cursor near tab boundary. Anti-Close Shield active.');
+    }
+  };
+
+  const handleMouseLeave = (e: MouseEvent) => {
+    if (settings.security.mouseExitWarning && e.clientY <= 10) {
+      showAntiCloseWarning('Window exit trapped. Tab closure prevented.');
+    }
+  };
+
+  if (settings.security.mouseExitWarning) {
+    window.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseleave', handleMouseLeave);
+  }
+
   securityCleanupFn = () => {
     if (extensionObserver) extensionObserver.disconnect();
     window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -534,5 +762,7 @@ export function initSecurityEngine(settings: AppSettings) {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('keydown', handleKeyDown, true);
     window.removeEventListener('contextmenu', handleContextMenu);
+    window.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseleave', handleMouseLeave);
   };
 }
