@@ -810,16 +810,17 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
             </div>
           </>
         ) : (
-          /* High-Speed Embed Frame (Invidious / Ytify / Vivid / YouTube-NoCookie) */
-          <iframe
-            id="invidious-video-iframe"
-            key={`${playerMode}-${metadata.videoId}`}
-            src={getEmbedSrc()}
-            title={metadata.title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-            className="w-full h-full border-0 rounded-3xl"
-          />
+          /* Decrypted Native Proxy Stream (Zero External Embeds - 100% Unblockable) */
+          <div className="w-full h-full relative flex items-center justify-center bg-black rounded-3xl overflow-hidden">
+            <video
+              key={`invidious-native-${playerMode}-${metadata.videoId}-${selectedResolution}`}
+              src={`/api/video/stream?id=${metadata.videoId}&res=${selectedResolution}`}
+              controls
+              autoPlay
+              className="w-full h-full object-contain"
+              poster={metadata.thumbnail}
+            />
+          </div>
         )}
       </div>
 

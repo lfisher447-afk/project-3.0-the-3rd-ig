@@ -21,6 +21,7 @@ import {
   Sparkles,
   Heart,
   Share2,
+  Database,
 } from 'lucide-react';
 import { Track, Playlist } from '../../types';
 import {
@@ -31,6 +32,10 @@ import {
   deletePlaylist,
   getAllTracks,
   getAllPlaylists,
+  getStorageMetrics,
+  clearAllCachedAudio,
+  DetailedStorageMetrics,
+  onDBChange,
 } from '../../lib/db';
 
 export interface VaultMainProps {
@@ -75,6 +80,22 @@ export const VaultMain: React.FC<VaultMainProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const backupInputRef = useRef<HTMLInputElement | null>(null);
+  const [storageMetrics, setStorageMetrics] = useState<DetailedStorageMetrics | null>(null);
+
+  React.useEffect(() => {
+    getStorageMetrics().then(setStorageMetrics).catch(() => {});
+    const unsub = onDBChange(() => {
+      getStorageMetrics().then(setStorageMetrics).catch(() => {});
+    });
+    return unsub;
+  }, [tracks.length, playlists.length]);
+
+  const handleClearAudioCache = async () => {
+    const cleared = await clearAllCachedAudio();
+    showToast(`Cleared ${cleared} offline audio cache items`);
+    const metrics = await getStorageMetrics();
+    setStorageMetrics(metrics);
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -422,35 +443,64 @@ export const VaultMain: React.FC<VaultMainProps> = ({
         </div>
       </div>
 
-      {/* Metrics Row (Adhering to anti-slop guidelines: no pill boxes) */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* Metrics Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-5 rounded-2xl bg-[#090d16] border border-slate-800/80 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+          <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 shrink-0">
             <Music2 size={24} />
           </div>
           <div>
             <div className="text-2xl font-bold text-white font-mono">{tracks.length}</div>
-            <div className="text-xs text-slate-400">Stored Library Tracks</div>
+            <div className="text-xs text-slate-400">Library Tracks</div>
           </div>
         </div>
 
         <div className="p-5 rounded-2xl bg-[#090d16] border border-slate-800/80 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+          <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 shrink-0">
             <Disc size={24} />
           </div>
           <div>
             <div className="text-2xl font-bold text-white font-mono">{playlists.length}</div>
-            <div className="text-xs text-slate-400">Curated Playlists</div>
+            <div className="text-xs text-slate-400">Playlists</div>
           </div>
         </div>
 
+        <div className="p-5 rounded-2xl bg-[#090d16] border border-slate-800/80 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+              <HardDrive size={24} />
+            </div>
+            <div>
+              <div className="text-xl font-bold text-emerald-400 font-mono">
+                {storageMetrics ? `${storageMetrics.audioCacheMB} MB` : '0 MB'}
+              </div>
+              <div className="text-[11px] text-slate-400">
+                Binary Audio Cache ({storageMetrics?.audioCacheCount || 0} tracks)
+              </div>
+            </div>
+          </div>
+          {storageMetrics && storageMetrics.audioCacheCount > 0 && (
+            <button
+              onClick={handleClearAudioCache}
+              className="px-2 py-1 text-[10px] font-mono rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 hover:bg-rose-500/20 transition cursor-pointer shrink-0"
+              title="Purge Audio Cache"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
         <div className="p-5 rounded-2xl bg-[#090d16] border border-slate-800/80 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-            <HardDrive size={24} />
+          <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+            <Database size={24} />
           </div>
           <div>
-            <div className="text-2xl font-bold text-white font-mono">Lossless</div>
-            <div className="text-xs text-slate-400">IndexedDB Client Cache</div>
+            <div className="text-xl font-bold text-amber-300 font-mono">
+              {storageMetrics ? `${storageMetrics.totalUsageMB} MB` : 'Active'}
+            </div>
+            <div className="text-[11px] text-slate-400">
+              Browser Quota ({storageMetrics ? `${storageMetrics.percent}%` : '0%'} used)
+            </div>
           </div>
         </div>
       </div>

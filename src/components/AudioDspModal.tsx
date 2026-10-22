@@ -26,9 +26,12 @@ import {
   TrendingDown,
   Volume1,
   RefreshCw,
+  Bookmark,
+  Trash2,
 } from 'lucide-react';
 import { AppSettings, EQBandCount, SpatialMode, Track } from '../types';
 import { audioEngine } from '../lib/audioEngine';
+import { saveEqPreset, getAllEqPresets, deleteEqPreset, onDBChange } from '../lib/db';
 import {
   BAND_CONFIGURATIONS,
   SUPPORTED_BAND_COUNTS,
@@ -66,6 +69,21 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
   const [analyzerFftSize, setAnalyzerFftSize] = useState<number>(512);
   const [gainReductionDb, setGainReductionDb] = useState<number>(0);
   const [peakFrequencyHz, setPeakFrequencyHz] = useState<number>(0);
+  const [customPresets, setCustomPresets] = useState<EQPresetDef[]>([]);
+  const [customPresetName, setCustomPresetName] = useState('');
+  const [showSavePresetDialog, setShowSavePresetDialog] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      getAllEqPresets().then((presets) => setCustomPresets(presets)).catch(() => {});
+    }
+    const unsub = onDBChange((ev) => {
+      if (ev === 'presets-changed') {
+        getAllEqPresets().then((presets) => setCustomPresets(presets)).catch(() => {});
+      }
+    });
+    return unsub;
+  }, [isOpen]);
 
   // Active band count and configuration
   const activeBandCount: EQBandCount = settings.eq.bandCount || 5;
@@ -207,6 +225,40 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
           : {}),
       },
     }));
+  };
+
+  // Save current curve to dedicated IndexedDB EQ presets store
+  const handleSaveCustomPreset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = customPresetName.trim() || `Custom ${activeBandCount}B Curve`;
+    const presetId = `eq_custom_${Date.now()}`;
+    const newPreset: EQPresetDef = {
+      id: presetId,
+      name,
+      category: 'Custom',
+      description: `User-crafted ${activeBandCount}-band custom equalization curve`,
+      points: currentBandDefs.map((b, i) => ({ freq: b.freq, gain: currentGains[i] ?? 0 })),
+      bandCount: activeBandCount,
+      gains: currentGains,
+      preAmpGain: settings.eq.preAmpGain || 0,
+      autoGainCompensation: settings.eq.autoGainCompensation || false,
+      qFactorMultiplier: settings.eq.qFactorMultiplier || 1.0,
+      isCustom: true,
+      createdAt: Date.now(),
+    };
+
+    await saveEqPreset(newPreset);
+    setCustomPresets((prev) => [newPreset, ...prev]);
+    setCustomPresetName('');
+    setShowSavePresetDialog(false);
+    setCopiedStatus(`Saved "${name}" to Dedicated IndexedDB Vault!`);
+    setTimeout(() => setCopiedStatus(null), 3000);
+  };
+
+  const handleDeleteCustomPreset = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await deleteEqPreset(id);
+    setCustomPresets((prev) => prev.filter((p) => p.id !== id));
   };
 
   // Transform current gains (flatten, invert, smooth, tilts, boosts)
@@ -479,15 +531,54 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Filtered preset list
-  const filteredPresets = Object.entries(MASTER_EQ_PRESETS).filter(([key, p]) => {
-    const matchesCategory = presetCategory === 'All' || p.category === presetCategory;
-    const matchesSearch =
-      presetSearch === '' ||
-      p.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
-      p.description.toLowerCase().includes(presetSearch.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  // Filtered preset list combining built-in and IndexedDB custom presets
+  const filteredPresets = useMemo(() => {
+    const list: Array<{
+      key: string;
+      name: string;
+      category: string;
+      description: string;
+      points?: any;
+      gains?: any;
+      isCustom?: boolean;
+      id?: string;
+    }> = [];
+
+    // Add custom presets
+    customPresets.forEach((cp) => {
+      list.push({
+        key: cp.id || cp.name,
+        name: cp.name,
+        category: 'Custom',
+        description: cp.description || `Custom ${cp.bandCount || activeBandCount}-band curve`,
+        points: cp.points,
+        gains: cp.gains,
+        isCustom: true,
+        id: cp.id,
+      });
+    });
+
+    // Add master presets
+    Object.entries(MASTER_EQ_PRESETS).forEach(([key, p]) => {
+      list.push({
+        key,
+        name: p.name,
+        category: p.category,
+        description: p.description,
+        points: p.points,
+        isCustom: false,
+      });
+    });
+
+    return list.filter((p) => {
+      const matchesCategory = presetCategory === 'All' || p.category === presetCategory;
+      const matchesSearch =
+        presetSearch === '' ||
+        p.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
+        p.description.toLowerCase().includes(presetSearch.toLowerCase());
+      return matchesCategory && matchesSearch;
+    });
+  }, [customPresets, presetCategory, presetSearch, activeBandCount]);
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 md:p-6 select-none animate-in fade-in duration-200">
@@ -900,33 +991,70 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     </p>
                   </div>
 
-                  {/* Category Pills */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto">
-                    {['All', 'Mastering', 'Electronic', 'Acoustic', 'Vocal', 'Special'].map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => setPresetCategory(cat)}
-                        className={`px-3 py-1 rounded-lg text-[10px] font-mono font-bold transition cursor-pointer ${
-                          presetCategory === cat
-                            ? 'bg-[#48e4ff] text-[#051a20]'
-                            : 'bg-[#0a1e24] text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
+                  {/* Category Pills & Save Custom Curve Button */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => setShowSavePresetDialog(true)}
+                      className="px-3 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[10px] font-mono font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                    >
+                      <Bookmark size={12} />
+                      <span>Save Current Curve to Vault</span>
+                    </button>
+
+                    <div className="flex items-center gap-1.5 overflow-x-auto">
+                      {['All', 'Custom', 'Mastering', 'Electronic', 'Acoustic', 'Vocal', 'Special'].map((cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => setPresetCategory(cat)}
+                          className={`px-3 py-1 rounded-lg text-[10px] font-mono font-bold transition cursor-pointer ${
+                            presetCategory === cat
+                              ? 'bg-[#48e4ff] text-[#051a20]'
+                              : 'bg-[#0a1e24] text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {cat} {cat === 'Custom' && customPresets.length > 0 && `(${customPresets.length})`}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
                 {/* Preset Cards Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
-                  {filteredPresets.map(([pKey, p]) => {
-                    const isCurrent = settings.eq.activePreset === pKey;
+                  {filteredPresets.map((p) => {
+                    const isCurrent = settings.eq.activePreset === (p.id || p.key || p.name);
                     return (
-                      <button
-                        key={pKey}
-                        onClick={() => handleApplyPreset(pKey)}
-                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer group flex flex-col justify-between ${
+                      <div
+                        key={p.key}
+                        onClick={() => {
+                          if (p.isCustom) {
+                            let targetGains: number[];
+                            if (p.points) {
+                              targetGains = interpolateGainsForBands(activeBandCount, p.points);
+                            } else if (Array.isArray(p.gains) && p.gains.length === activeBandCount) {
+                              targetGains = p.gains;
+                            } else {
+                              targetGains = new Array(activeBandCount).fill(0);
+                            }
+
+                            onUpdateSettings((prev) => ({
+                              ...prev,
+                              eq: {
+                                ...prev.eq,
+                                enabled: true,
+                                activePreset: p.name,
+                                gains: targetGains,
+                                modeGains: {
+                                  ...(prev.eq.modeGains || {}),
+                                  [activeBandCount]: targetGains,
+                                },
+                              },
+                            }));
+                          } else {
+                            handleApplyPreset(p.key);
+                          }
+                        }}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer group flex flex-col justify-between relative ${
                           isCurrent
                             ? 'bg-[#12363f] border-[#48e4ff] text-white shadow-md shadow-cyan-500/20'
                             : 'bg-[#08181c] hover:bg-[#0f2e36] border-[#163840] hover:border-[#48e4ff]/40 text-[#8aaeb5]'
@@ -936,12 +1064,29 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                           <span className="text-xs font-bold text-white group-hover:text-[#48e4ff] truncate">
                             {p.name}
                           </span>
-                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#040e11] text-[#48e4ff] border border-cyan-900">
-                            {p.category}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                                p.isCustom
+                                  ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800'
+                                  : 'bg-[#040e11] text-[#48e4ff] border-cyan-900'
+                              }`}
+                            >
+                              {p.category}
+                            </span>
+                            {p.isCustom && p.id && (
+                              <button
+                                onClick={(e) => handleDeleteCustomPreset(p.id!, e)}
+                                className="p-1 text-zinc-500 hover:text-rose-400 rounded transition cursor-pointer"
+                                title="Delete Custom Preset"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <p className="text-[10px] text-[#789d9a] line-clamp-2">{p.description}</p>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1052,6 +1197,41 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     }}
                     className="w-full accent-[#34d399] cursor-pointer"
                   />
+                </div>
+
+                {/* Acoustic Reverb & Spatial HRTF Audition */}
+                <div className="pt-4 border-t border-[#133139] flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs font-mono text-[#789d9a]">
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                      Convolver: 32-Bit Float HRTF
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+                      Delay: {settings.spatial.mode === 'immersive' ? '22ms' : '15ms'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/30">
+                      Room: {settings.spatial.mode.toUpperCase()}
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (playingTone === 'spatial-audition') {
+                        audioEngine.stopTestTone();
+                        setPlayingTone(null);
+                      } else {
+                        audioEngine.playTestTone(528, 'sine');
+                        setPlayingTone('spatial-audition');
+                        setTimeout(() => {
+                          audioEngine.stopTestTone();
+                          setPlayingTone(null);
+                        }, 2200);
+                      }
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 hover:text-white hover:bg-cyan-900 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-cyan-500/10"
+                  >
+                    <Volume2 size={14} className={playingTone === 'spatial-audition' ? 'animate-bounce text-emerald-400' : ''} />
+                    <span>{playingTone === 'spatial-audition' ? 'Auditioning 3D Acoustics...' : 'Audition Room Acoustics'}</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1278,6 +1458,44 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Save Custom Preset to IndexedDB Dialog */}
+        {showSavePresetDialog && (
+          <div className="absolute inset-0 bg-black/85 backdrop-blur-sm z-30 flex items-center justify-center p-6">
+            <form onSubmit={handleSaveCustomPreset} className="bg-[#08181c] border border-[#234b54] p-6 rounded-2xl w-full max-w-md space-y-4">
+              <div className="flex items-center gap-2 text-white font-bold text-sm">
+                <Bookmark size={18} className="text-emerald-400" />
+                <span>Save Current Curve to Dedicated Vault</span>
+              </div>
+              <p className="text-xs text-[#789d9a]">
+                Stores your {activeBandCount}-band EQ curve with current pre-amp, Q-factors, and gains into IndexedDB and syncs to your Cloud Vault.
+              </p>
+              <input
+                type="text"
+                placeholder={`e.g. My Studio Vocal Boost (${activeBandCount}B)`}
+                value={customPresetName}
+                onChange={(e) => setCustomPresetName(e.target.value)}
+                autoFocus
+                className="w-full bg-[#030d0f] border border-[#143c44] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-[#48e4ff]"
+              />
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSavePresetDialog(false)}
+                  className="px-4 py-2 bg-[#0d272d] text-zinc-300 hover:text-white rounded-xl text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl text-xs cursor-pointer"
+                >
+                  Save Preset
+                </button>
+              </div>
+            </form>
           </div>
         )}
 

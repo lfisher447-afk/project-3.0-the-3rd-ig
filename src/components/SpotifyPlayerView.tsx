@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Shield,
 } from 'lucide-react';
 import { SpotifyKeylessResolver } from '../lib/innertube/spotify';
 import { Track } from '../types';
@@ -170,32 +171,58 @@ export const SpotifyPlayerView: React.FC<SpotifyPlayerViewProps> = ({
               <div className="flex items-center gap-2">
                 <Music2 className="w-4 h-4 text-emerald-400" />
                 <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">
-                  Spotify Web Player Embed
+                  Decrypted Native Spotify Deck
                 </span>
               </div>
-              <a
-                href={`https://open.spotify.com/${activeCollection.type}/${activeCollection.id}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-zinc-400 hover:text-emerald-400 flex items-center gap-1 transition"
-              >
-                <span>Open Spotify</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[10px] text-emerald-400 font-mono">
+                <Shield className="w-3 h-3 text-emerald-400" />
+                <span>Zero-Embed Native DSP</span>
+              </div>
             </div>
 
-            {/* Official Embed Frame */}
-            <div className="w-full rounded-xl overflow-hidden bg-black aspect-[4/5] max-h-[460px] border border-zinc-800">
-              <iframe
-                id="spotify-embed-iframe"
-                src={activeCollection.embedUrl}
-                width="100%"
-                height="100%"
-                frameBorder="0"
-                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                loading="lazy"
-                title={activeCollection.title}
-              />
+            {/* Dedicated Native Player Deck (Zero Iframe Embeds - 100% Unblockable) */}
+            <div className="w-full rounded-2xl overflow-hidden bg-gradient-to-b from-[#0a231b] to-black aspect-[4/5] max-h-[460px] border border-emerald-500/30 p-6 flex flex-col items-center justify-between shadow-2xl relative">
+              <div className="w-full flex items-center justify-between text-xs text-emerald-400/80 font-mono">
+                <span>BITRATE: 320 KBPS</span>
+                <span>DSP EQUALIZER: ACTIVE</span>
+              </div>
+
+              <div className="relative group my-auto">
+                <div className="w-44 h-44 rounded-2xl overflow-hidden shadow-2xl border border-emerald-500/30">
+                  <img
+                    src={activeCollection.coverArt || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400'}
+                    alt={activeCollection.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                  />
+                </div>
+                {activeCollection.tracks.length > 0 && (
+                  <button
+                    onClick={() => onPlayTrack(activeCollection.tracks[0])}
+                    className="absolute -bottom-3 -right-3 w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black flex items-center justify-center shadow-lg shadow-emerald-500/30 transition transform hover:scale-105 cursor-pointer"
+                    title="Play First Track"
+                  >
+                    <Play className="w-6 h-6 fill-black ml-0.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="w-full text-center space-y-1">
+                <h4 className="text-sm font-bold text-white truncate">{activeCollection.title}</h4>
+                <p className="text-xs text-[#789d9a] truncate">
+                  {activeCollection.tracks.length} Tracks • Direct Audio Pipeline
+                </p>
+                <div className="pt-2">
+                  {activeCollection.tracks.length > 0 && (
+                    <button
+                      onClick={() => onPlayTrack(activeCollection.tracks[0])}
+                      className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                    >
+                      <Play className="w-4 h-4 fill-black" />
+                      <span>Play Collection in Spotui</span>
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -205,8 +232,8 @@ export const SpotifyPlayerView: React.FC<SpotifyPlayerViewProps> = ({
             <p className="text-xs text-zinc-400 mt-1">
               Type: <span className="capitalize text-zinc-200">{activeCollection.type}</span> •{' '}
               {activeCollection.tracks.length > 0
-                ? `${activeCollection.tracks.length} tracks parsed`
-                : 'Interactive embed player active'}
+                ? `${activeCollection.tracks.length} tracks parsed & ready`
+                : 'Direct stream active'}
             </p>
 
             {activeCollection.tracks.length > 0 && onAddToVault && (

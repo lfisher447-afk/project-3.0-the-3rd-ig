@@ -8,6 +8,7 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { handleProxyRequest, turboCache } from "./server/proxyEngine.js";
 import { securityHeadersMiddleware, crawlerFirewallMiddleware, securityRouter } from "./server/securityServer.js";
+import { cloudSyncRouter } from "./server/cloudSyncServer.js";
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ async function startServer() {
   app.use(securityHeadersMiddleware);
   app.use(crawlerFirewallMiddleware);
   app.use("/api/security", securityRouter);
+  app.use("/api/sync", cloudSyncRouter);
 
   // CORS and iframe headers
   app.use((req, res, next) => {

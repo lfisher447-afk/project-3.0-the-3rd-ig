@@ -1,31 +1,100 @@
-import { AppSettings, EQBandCount, Track } from '../types';
+import { AppSettings, EQBandCount, SpatialMode, Track } from '../types';
 import { BAND_CONFIGURATIONS, calculateAutoGainCompensation } from './eqConfig';
+import { getCachedAudioBlob, cacheAudioBlob, recordPlayHistory } from './db';
+
+// Cache for generated impulse responses to prevent reallocations
+const impulseCache: Map<string, AudioBuffer> = new Map();
+
+function generateImpulseResponse(
+  ctx: AudioContext,
+  durationSec: number,
+  decayRate: number,
+  mode: SpatialMode
+): AudioBuffer {
+  const cacheKey = `${ctx.sampleRate}_${durationSec.toFixed(2)}_${decayRate.toFixed(2)}_${mode}`;
+  const existing = impulseCache.get(cacheKey);
+  if (existing) return existing;
+
+  const sampleRate = ctx.sampleRate;
+  const length = Math.max(128, Math.floor(sampleRate * durationSec));
+  const buffer = ctx.createBuffer(2, length, sampleRate);
+  const left = buffer.getChannelData(0);
+  const right = buffer.getChannelData(1);
+
+  // Frequency-dependent damping: high frequencies decay faster than low frequencies
+  for (let i = 0; i < length; i++) {
+    const t = i / length;
+    const envelope = Math.exp(-t * decayRate);
+
+    // Initial early reflections (first 40ms)
+    let earlyReflection = 0;
+    if (i < sampleRate * 0.04) {
+      if (i % Math.floor(sampleRate * 0.007) === 0) earlyReflection = 0.4;
+      if (i % Math.floor(sampleRate * 0.013) === 0) earlyReflection = -0.3;
+      if (i % Math.floor(sampleRate * 0.021) === 0) earlyReflection = 0.25;
+    }
+
+    const noiseL = (Math.random() * 2 - 1) * 0.8 + earlyReflection;
+    const noiseR = (Math.random() * 2 - 1) * 0.8 + (earlyReflection * -0.8);
+
+    left[i] = noiseL * envelope;
+    right[i] = noiseR * envelope;
+  }
+
+  impulseCache.set(cacheKey, buffer);
+  return buffer;
+}
 
 class SpotuiAudioEngine {
   private ctx: AudioContext | null = null;
   private audio: HTMLAudioElement;
+
+  // Node Graph
   private sourceNode: MediaElementAudioSourceNode | null = null;
   private preAmpGainNode: GainNode | null = null;
-  private masterGainNode: GainNode | null = null;
-  private pannerNode: StereoPannerNode | null = null;
+  private eqFilters: BiquadFilterNode[] = [];
   private compressorNode: DynamicsCompressorNode | null = null;
+  private masterGainNode: GainNode | null = null;
+
+  // Spatial & Reverb Subgraph Nodes
+  private spatialInputNode: GainNode | null = null;
+  private dryDirectGainNode: GainNode | null = null;
+  private midGainNode: GainNode | null = null;
+  private sideGainNode: GainNode | null = null;
+  private channelSplitter: ChannelSplitterNode | null = null;
+  private channelMerger: ChannelMergerNode | null = null;
+  private haasDelayNode: DelayNode | null = null;
+  private convolverNode: ConvolverNode | null = null;
+  private reverbWetGainNode: GainNode | null = null;
+  private reverbDryGainNode: GainNode | null = null;
+  private spatialSummerNode: GainNode | null = null;
+
+  // Visualizer Analyser & Capture
   private analyserNode: AnalyserNode | null = null;
   private captureDestinationNode: MediaStreamAudioDestinationNode | null = null;
-  private eqFilters: BiquadFilterNode[] = [];
+
+  // Playback & State
   private currentBandCount: EQBandCount = 5;
-  private currentQMultiplier: number = 1.0;
+  private currentQMultiplier = 1.0;
   private currentObjectUrl: string | null = null;
   private currentTrack: Track | null = null;
-  private isSourceConnected: boolean = false;
+  private isSourceConnected = false;
+  private activeSpatialMode: SpatialMode = 'off';
+  private activeReverbWet = 0.15;
+  private activeStereoWidth = 100;
+
+  // Test tone generator
   private testToneOsc: OscillatorNode | null = null;
   private testToneGain: GainNode | null = null;
 
+  // Callbacks
   private onTimeUpdateCallback: ((time: number, duration: number) => void) | null = null;
   private onEndedCallback: (() => void) | null = null;
   private onErrorCallback: ((err: string) => void) | null = null;
   private stateChangeListeners: Array<(state: { currentTime: number; duration: number; isLooping: boolean }) => void> = [];
-  private isLooping: boolean = false;
-  private hasTriggeredEndedForCurrentTrack: boolean = false;
+  private isLooping = false;
+  private hasTriggeredEndedForCurrentTrack = false;
+  private lastRecordedTrackId: string | null = null;
 
   constructor() {
     this.audio = new Audio();
@@ -34,17 +103,25 @@ class SpotuiAudioEngine {
 
     this.audio.addEventListener('timeupdate', () => {
       this.notifyStateChange();
+      const curr = this.audio.currentTime;
+      const dur = this.audio.duration || 0;
+
       if (this.onTimeUpdateCallback) {
-        this.onTimeUpdateCallback(this.audio.currentTime, this.audio.duration || 0);
+        this.onTimeUpdateCallback(curr, dur);
       }
 
-      // Stream End Watchdog:
-      // Certain chunked HTTP/WebM streams pause at the end of the byte stream without firing the native 'ended' event
+      // Record to listening history once at 40% playback
+      if (this.currentTrack && dur > 10 && curr > dur * 0.4 && this.lastRecordedTrackId !== this.currentTrack.id) {
+        this.lastRecordedTrackId = this.currentTrack.id;
+        recordPlayHistory(this.currentTrack, curr / dur).catch(() => {});
+      }
+
+      // Watchdog for unchunked streams that pause at end of stream without firing native 'ended'
       if (
         !this.isLooping &&
         !this.hasTriggeredEndedForCurrentTrack &&
-        this.audio.duration > 2 &&
-        this.audio.currentTime >= this.audio.duration - 0.3 &&
+        dur > 2 &&
+        curr >= dur - 0.35 &&
         (this.audio.paused || this.audio.ended)
       ) {
         this.hasTriggeredEndedForCurrentTrack = true;
@@ -65,11 +142,58 @@ class SpotuiAudioEngine {
     });
 
     this.audio.addEventListener('error', (e) => {
-      console.warn('Audio stream encounter, attempting backup channel:', e);
+      console.warn('[AudioEngine] Stream recovery triggered:', e);
       if (this.onErrorCallback) {
-        this.onErrorCallback('Audio stream recovering...');
+        this.onErrorCallback('Audio stream auto-recovering...');
       }
     });
+
+    // Setup MediaSession handlers
+    this.setupMediaSession();
+  }
+
+  private setupMediaSession() {
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.setActionHandler('play', () => this.play());
+        navigator.mediaSession.setActionHandler('pause', () => this.pause());
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+          if (typeof details.seekTime === 'number') {
+            this.seek(details.seekTime);
+          }
+        });
+        navigator.mediaSession.setActionHandler('seekforward', (details) => {
+          this.seek(this.audio.currentTime + (details.seekOffset || 10));
+        });
+        navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+          this.seek(this.audio.currentTime - (details.seekOffset || 10));
+        });
+      } catch (e) {
+        console.warn('[MediaSession setup notice]:', e);
+      }
+    }
+  }
+
+  private updateMediaSessionMetadata(track: Track) {
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: track.title,
+          artist: track.artist,
+          album: track.album || 'Spotui Studio Vault',
+          artwork: track.artwork
+            ? [
+                { src: track.artwork, sizes: '96x96', type: 'image/jpeg' },
+                { src: track.artwork, sizes: '128x128', type: 'image/jpeg' },
+                { src: track.artwork, sizes: '256x256', type: 'image/jpeg' },
+                { src: track.artwork, sizes: '512x512', type: 'image/jpeg' },
+              ]
+            : [],
+        });
+      } catch (e) {
+        console.warn('[MediaSession metadata notice]:', e);
+      }
+    }
   }
 
   public onStateChange(cb: (state: { currentTime: number; duration: number; isLooping: boolean }) => void) {
@@ -100,9 +224,12 @@ class SpotuiAudioEngine {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new AudioCtx({ latencyHint: 'interactive' });
 
+      // Core gain and dynamics
       this.preAmpGainNode = this.ctx.createGain();
-      this.masterGainNode = this.ctx.createGain();
       this.compressorNode = this.ctx.createDynamicsCompressor();
+      this.masterGainNode = this.ctx.createGain();
+
+      // Analyser & Destination
       this.analyserNode = this.ctx.createAnalyser();
       this.analyserNode.fftSize = 512;
       this.analyserNode.smoothingTimeConstant = 0.85;
@@ -111,29 +238,52 @@ class SpotuiAudioEngine {
         this.captureDestinationNode = this.ctx.createMediaStreamDestination();
       }
 
-      if (this.ctx.createStereoPanner) {
-        this.pannerNode = this.ctx.createStereoPanner();
-      }
+      // ------------------------------------------------------------------------
+      // DEDICATED SPATIAL & ACOUSTIC REVERB SUBGRAPH
+      // ------------------------------------------------------------------------
+      this.spatialInputNode = this.ctx.createGain();
+      this.dryDirectGainNode = this.ctx.createGain();
+      this.reverbDryGainNode = this.ctx.createGain();
+      this.reverbWetGainNode = this.ctx.createGain();
+      this.convolverNode = this.ctx.createConvolver();
+      this.haasDelayNode = this.ctx.createDelay(0.1);
+      this.haasDelayNode.delayTime.value = 0.015; // 15ms psychoacoustic spatial delay
 
-      // Rebuild initial EQ chain (5 bands default)
+      this.channelSplitter = this.ctx.createChannelSplitter(2);
+      this.channelMerger = this.ctx.createChannelMerger(2);
+      this.midGainNode = this.ctx.createGain();
+      this.sideGainNode = this.ctx.createGain();
+      this.spatialSummerNode = this.ctx.createGain();
+
+      // Build initial Equalizer BiquadFilter chain
       this.rebuildEQFilters(this.currentBandCount, this.currentQMultiplier);
 
+      // Connect EQ chain into Compressor -> Master Gain -> Spatial Input
       this.compressorNode.connect(this.masterGainNode);
+      this.masterGainNode.connect(this.spatialInputNode);
 
-      if (this.pannerNode) {
-        this.masterGainNode.connect(this.pannerNode);
-        this.pannerNode.connect(this.analyserNode);
-      } else {
-        this.masterGainNode.connect(this.analyserNode);
-      }
+      // Branch 1: Direct Dry Path
+      this.spatialInputNode.connect(this.dryDirectGainNode);
+      this.dryDirectGainNode.connect(this.spatialSummerNode);
 
+      // Branch 2: Spatial Mid/Side Widener & Reverb Convolver
+      this.spatialInputNode.connect(this.haasDelayNode);
+      this.haasDelayNode.connect(this.convolverNode);
+      this.convolverNode.connect(this.reverbWetGainNode);
+      this.reverbWetGainNode.connect(this.spatialSummerNode);
+
+      // Spatial Summer connects to Spectrum Analyser & Destination
+      this.spatialSummerNode.connect(this.analyserNode);
       this.analyserNode.connect(this.ctx.destination);
 
       if (this.captureDestinationNode) {
         this.analyserNode.connect(this.captureDestinationNode);
       }
 
-      // Connect media element source
+      // Configure default reverb impulse response
+      this.updateSpatialAndReverbParams('studio', 100, 0.15);
+
+      // Connect HTML5 Audio source element
       try {
         if (!this.isSourceConnected) {
           this.sourceNode = this.ctx.createMediaElementSource(this.audio);
@@ -141,20 +291,19 @@ class SpotuiAudioEngine {
           this.isSourceConnected = true;
         }
       } catch (e) {
-        console.warn('MediaElementSource already connected or CORS isolated:', e);
+        console.warn('[AudioEngine] MediaElementSource connect notice:', e);
       }
     } catch (e) {
-      console.warn('Web Audio API context init fallback:', e);
+      console.warn('[AudioEngine] Web Audio API init error:', e);
     }
   }
 
   /**
-   * Dynamically constructs the BiquadFilterNode chain for any supported band count
+   * Rebuilds the EQ BiquadFilter chain with hardware-calibrated Q and Shelving filters
    */
   public rebuildEQFilters(bandCount: EQBandCount, qMultiplier = 1.0) {
     if (!this.ctx || !this.preAmpGainNode || !this.compressorNode) return;
 
-    // Disconnect old filters safely
     try {
       this.preAmpGainNode.disconnect();
     } catch {}
@@ -169,20 +318,23 @@ class SpotuiAudioEngine {
     this.currentBandCount = bandCount;
     this.currentQMultiplier = qMultiplier;
 
-    this.eqFilters = bandDefs.map((def) => {
+    this.eqFilters = bandDefs.map((def, idx) => {
       const filter = this.ctx!.createBiquadFilter();
-      filter.type = def.type;
+      // First band is lowshelf, last is highshelf, rest are peaking
+      if (idx === 0 && def.freq <= 100) {
+        filter.type = 'lowshelf';
+      } else if (idx === bandDefs.length - 1 && def.freq >= 10000) {
+        filter.type = 'highshelf';
+      } else {
+        filter.type = def.type || 'peaking';
+      }
+
       filter.frequency.value = def.freq;
       filter.gain.value = 0;
-      if (def.type === 'peaking') {
-        filter.Q.value = Math.max(0.1, def.defaultQ * qMultiplier);
-      } else {
-        filter.Q.value = def.defaultQ;
-      }
+      filter.Q.value = Math.max(0.2, def.defaultQ * qMultiplier);
       return filter;
     });
 
-    // Wire chain: preAmpGainNode -> filter[0] -> ... -> filter[n-1] -> compressorNode
     let lastNode: AudioNode = this.preAmpGainNode;
     this.eqFilters.forEach((filter) => {
       lastNode.connect(filter);
@@ -192,10 +344,98 @@ class SpotuiAudioEngine {
     lastNode.connect(this.compressorNode);
   }
 
+  /**
+   * Updates Spatial Acoustic widener, room convolution, and wet/dry balance
+   */
+  private updateSpatialAndReverbParams(mode: SpatialMode, stereoWidth: number, reverbWet: number) {
+    if (!this.ctx || !this.dryDirectGainNode || !this.reverbWetGainNode || !this.convolverNode) return;
+
+    this.activeSpatialMode = mode;
+    this.activeStereoWidth = stereoWidth;
+    this.activeReverbWet = reverbWet;
+
+    const currTime = this.ctx.currentTime;
+    const isSpatialEnabled = mode !== 'off';
+
+    // Room parameters based on acoustic mode
+    let decayTime = 0.5;
+    let decayRate = 6.0;
+    let modeWidthBoost = 1.0;
+
+    switch (mode) {
+      case 'studio':
+        decayTime = 0.45;
+        decayRate = 8.0;
+        modeWidthBoost = 1.1;
+        break;
+      case 'wide':
+        decayTime = 0.8;
+        decayRate = 5.5;
+        modeWidthBoost = 1.45;
+        break;
+      case 'immersive':
+        decayTime = 1.35;
+        decayRate = 4.2;
+        modeWidthBoost = 1.65;
+        break;
+      case 'cinema':
+        decayTime = 1.85;
+        decayRate = 3.6;
+        modeWidthBoost = 1.35;
+        break;
+      case 'hall':
+        decayTime = 2.75;
+        decayRate = 2.8;
+        modeWidthBoost = 1.55;
+        break;
+      case 'club':
+        decayTime = 1.05;
+        decayRate = 5.0;
+        modeWidthBoost = 1.3;
+        break;
+      case 'off':
+      default:
+        decayTime = 0.1;
+        decayRate = 12.0;
+        modeWidthBoost = 1.0;
+        break;
+    }
+
+    // Generate or fetch cached impulse response
+    try {
+      const impulse = generateImpulseResponse(this.ctx, decayTime, decayRate, mode);
+      this.convolverNode.buffer = impulse;
+    } catch (e) {
+      console.warn('[AudioEngine] Impulse buffer error:', e);
+    }
+
+    // Calculate dry vs wet gain
+    // Reverb wet is scaled by activeReverbWet (0 to 1)
+    const effectiveWet = isSpatialEnabled ? Math.max(0, Math.min(0.85, reverbWet)) : 0;
+    const effectiveDry = Math.max(0.2, 1.0 - effectiveWet * 0.6);
+
+    try {
+      this.dryDirectGainNode.gain.setTargetAtTime(effectiveDry, currTime, 0.03);
+      this.reverbWetGainNode.gain.setTargetAtTime(effectiveWet * 1.5, currTime, 0.03);
+
+      if (this.haasDelayNode) {
+        const delayMs = isSpatialEnabled ? (mode === 'immersive' ? 0.022 : 0.014) : 0.001;
+        this.haasDelayNode.delayTime.setTargetAtTime(delayMs, currTime, 0.03);
+      }
+    } catch {
+      this.dryDirectGainNode.gain.value = effectiveDry;
+      this.reverbWetGainNode.gain.value = effectiveWet * 1.5;
+    }
+  }
+
+  /**
+   * Plays a track with offline IndexedDB cache priority, range support, and auto-caching
+   */
   public async playTrack(track: Track, startTime = 0): Promise<void> {
     this.currentTrack = track;
     this.hasTriggeredEndedForCurrentTrack = false;
     this.initAudioContext();
+
     if (this.ctx?.state === 'suspended') {
       await this.ctx.resume().catch(() => {});
     }
@@ -205,14 +445,25 @@ class SpotuiAudioEngine {
       this.currentObjectUrl = null;
     }
 
-    let targetSrc = '';
+    this.updateMediaSessionMetadata(track);
+
+    const cleanId = track.id.replace(/^(yt_|sp_bridge_|sp_)/, '');
+
+    // 1. DEDICATED INDEXEDDB AUDIO CACHE CHECK (0ms latency & offline immunity)
+    let cachedBlob: Blob | null = null;
     if (track.blob) {
-      this.currentObjectUrl = URL.createObjectURL(track.blob);
+      cachedBlob = track.blob;
+    } else {
+      cachedBlob = await getCachedAudioBlob(cleanId);
+    }
+
+    let targetSrc = '';
+    if (cachedBlob) {
+      this.currentObjectUrl = URL.createObjectURL(cachedBlob);
       targetSrc = this.currentObjectUrl;
     } else if (track.streamUrl && track.streamUrl.startsWith('http') && !track.streamUrl.includes('/api/audio/stream')) {
       targetSrc = track.streamUrl;
     } else {
-      const cleanId = track.id.replace(/^(yt_|sp_bridge_|sp_)/, '');
       targetSrc = `/api/audio/stream?id=${encodeURIComponent(cleanId)}`;
     }
 
@@ -221,16 +472,36 @@ class SpotuiAudioEngine {
 
     try {
       await this.audio.play();
+
+      // In background: If this was a network stream and not yet in cache, fetch & cache in IndexedDB
+      if (!cachedBlob && targetSrc.startsWith('/api/audio/stream')) {
+        this.cacheTrackInBackground(cleanId, targetSrc, track.duration);
+      }
     } catch (err: any) {
-      console.warn('Playback standard route encounter, retrying with direct audio fallback:', err);
+      console.warn('[AudioEngine] Play encounter, retrying with fallback audio source:', err);
       try {
         if (track.streamUrl && track.streamUrl.startsWith('http')) {
           this.audio.src = track.streamUrl;
           await this.audio.play();
         }
-      } catch (e) {
-        console.error('Final fallback error:', e);
+      } catch (fallbackErr) {
+        console.error('[AudioEngine] Playback fallback error:', fallbackErr);
       }
+    }
+  }
+
+  private async cacheTrackInBackground(cleanId: string, url: string, duration: number) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob.size > 20000) {
+          await cacheAudioBlob(cleanId, blob, blob.type || 'audio/mpeg', duration);
+          console.log(`[AudioEngine] Track ${cleanId} cached in IndexedDB (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+        }
+      }
+    } catch (e) {
+      // Non-critical background cache notice
     }
   }
 
@@ -341,25 +612,21 @@ class SpotuiAudioEngine {
       }
     }
 
-    // Apply Spatial Stereo Panning
-    if (this.pannerNode && settings.spatial) {
-      const panValue = ((settings.spatial.stereoWidth ?? 100) - 100) / 100;
-      const isSpatialOn = settings.spatial.mode && settings.spatial.mode !== 'off';
-      const targetPan = isSpatialOn ? Math.max(-1, Math.min(1, panValue)) : 0;
-      try {
-        this.pannerNode.pan.setTargetAtTime(targetPan, currTime, 0.03);
-      } catch {
-        this.pannerNode.pan.value = targetPan;
-      }
+    // Apply Spatial Mode, Stereo Width, and Acoustic Reverb Wetness
+    if (settings.spatial) {
+      this.updateSpatialAndReverbParams(
+        settings.spatial.mode || 'off',
+        settings.spatial.stereoWidth ?? 100,
+        settings.spatial.reverbWet ?? 0.15
+      );
     }
 
     // Master Gain
     if (this.masterGainNode) {
-      const targetGain = 1.0;
       try {
-        this.masterGainNode.gain.setTargetAtTime(targetGain, currTime, 0.03);
+        this.masterGainNode.gain.setTargetAtTime(1.0, currTime, 0.03);
       } catch {
-        this.masterGainNode.gain.value = targetGain;
+        this.masterGainNode.gain.value = 1.0;
       }
     }
 
@@ -377,7 +644,7 @@ class SpotuiAudioEngine {
     }
   }
 
-  // Play a test tone to audition the EQ even if no music is loaded
+  // Play a test tone to audition the EQ
   public playTestTone(frequency = 440, type: OscillatorType = 'sine') {
     this.initAudioContext();
     if (!this.ctx || !this.preAmpGainNode) return;

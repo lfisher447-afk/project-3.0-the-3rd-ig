@@ -144,10 +144,18 @@ export interface CurveControlPoint {
 }
 
 export interface EQPresetDef {
+  id?: string;
   name: string;
-  category: 'Mastering' | 'Electronic' | 'Acoustic' | 'Vocal' | 'Special';
+  category: 'Mastering' | 'Electronic' | 'Acoustic' | 'Vocal' | 'Special' | 'Custom';
   description: string;
   points: CurveControlPoint[];
+  bandCount?: number;
+  gains?: number[];
+  preAmpGain?: number;
+  autoGainCompensation?: boolean;
+  qFactorMultiplier?: number;
+  isCustom?: boolean;
+  createdAt?: number;
 }
 
 export const MASTER_EQ_PRESETS: Record<string, EQPresetDef> = {
