@@ -50,7 +50,7 @@ interface SpotuiDB extends DBSchema {
     indexes: {
       'by-source': string;
       'by-added': number;
-      'by-liked': string; // 'true' | 'false'
+      'by-liked': string;
       'by-title': string;
     };
   };
@@ -104,7 +104,54 @@ interface SpotuiDB extends DBSchema {
 const DB_NAME = 'spotui-signal-room-v3';
 const DB_VERSION = 2;
 
-let dbPromise: Promise<IDBPDatabase<SpotuiDB>> | null = null;
+// In-Memory Tier for sandboxed/private/restricted iframe browsing
+const inMemoryCache = {
+  tracks: new Map<string, Track>(),
+  playlists: new Map<string, Playlist>(),
+  eq_presets: new Map<string, EQPresetDef>(),
+  play_history: new Map<string, PlayHistoryRecord>(),
+  settings: new Map<string, any>(),
+  cloud_sync_queue: new Map<string, SyncQueueItem>(),
+};
+
+// Safe localStorage sync helper
+function readLocalJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(`spotui_vault_${key}`);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocalJson(key: string, val: any): void {
+  try {
+    localStorage.setItem(`spotui_vault_${key}`, JSON.stringify(val));
+  } catch {
+    // Quota reached or private mode localStorage restricted
+  }
+}
+
+// Populate in-memory cache from localStorage on startup
+try {
+  const initTracks = readLocalJson<Track[]>('tracks', []);
+  initTracks.forEach((t) => inMemoryCache.tracks.set(t.id, t));
+
+  const initPlaylists = readLocalJson<Playlist[]>('playlists', []);
+  initPlaylists.forEach((p) => inMemoryCache.playlists.set(p.id, p));
+
+  const initPresets = readLocalJson<EQPresetDef[]>('eq_presets', []);
+  initPresets.forEach((pr) => inMemoryCache.eq_presets.set(pr.id || pr.name, pr));
+
+  const initHistory = readLocalJson<PlayHistoryRecord[]>('play_history', []);
+  initHistory.forEach((h) => inMemoryCache.play_history.set(h.id, h));
+
+  const initQueue = readLocalJson<SyncQueueItem[]>('cloud_sync_queue', []);
+  initQueue.forEach((q) => inMemoryCache.cloud_sync_queue.set(q.id, q));
+} catch {}
+
+let dbPromise: Promise<IDBPDatabase<SpotuiDB> | null> | null = null;
+let isIndexedDBSupported = true;
 
 // Reactive DB Event Emitter for instant UI re-renders
 type DBEvent = 'tracks-changed' | 'playlists-changed' | 'audio-cached' | 'presets-changed' | 'history-changed' | 'sync-queue-changed';
@@ -128,7 +175,17 @@ function emitDBChange(event: DBEvent, payload?: any) {
   });
 }
 
-export function getDB(): Promise<IDBPDatabase<SpotuiDB>> {
+/**
+ * Supercharged, Dedicated, Resilient IndexedDB Connection
+ * Auto-reconnects, never hangs on rejected promises, and gracefully falls back to Memory/LocalStorage
+ */
+export async function getDB(): Promise<IDBPDatabase<SpotuiDB> | null> {
+  if (!isIndexedDBSupported) return null;
+  if (typeof indexedDB === 'undefined') {
+    isIndexedDBSupported = false;
+    return null;
+  }
+
   if (!dbPromise) {
     dbPromise = openDB<SpotuiDB>(DB_NAME, DB_VERSION, {
       upgrade(db, oldVersion, newVersion, tx) {
@@ -190,9 +247,30 @@ export function getDB(): Promise<IDBPDatabase<SpotuiDB>> {
           db.createObjectStore('settings');
         }
       },
+      blocked() {
+        console.warn('[Spotui DB] Connection blocked by another tab/session');
+      },
+      blocking() {
+        console.warn('[Spotui DB] Connection blocking an upgrade');
+      },
+      terminated() {
+        console.warn('[Spotui DB] Connection terminated abnormally, will auto-reconnect');
+        dbPromise = null;
+      },
+    }).catch((err) => {
+      console.warn('[Spotui DB Engine] IndexedDB open error, falling back to Hybrid Sync Tier:', err?.message);
+      dbPromise = null;
+      return null;
     });
   }
-  return dbPromise;
+
+  try {
+    const db = await dbPromise;
+    return db;
+  } catch {
+    dbPromise = null;
+    return null;
+  }
 }
 
 // ============================================================================
@@ -200,155 +278,214 @@ export function getDB(): Promise<IDBPDatabase<SpotuiDB>> {
 // ============================================================================
 
 export async function saveTrack(track: Track): Promise<void> {
-  const db = await getDB();
-  await db.put('tracks', track);
+  // Update in-memory & localStorage tier first for zero-latency UI
+  inMemoryCache.tracks.set(track.id, track);
+  writeLocalJson('tracks', Array.from(inMemoryCache.tracks.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.put('tracks', track);
+    }
+  } catch (err) {
+    console.warn('[saveTrack IDB notice]:', err);
+  }
   emitDBChange('tracks-changed', { trackId: track.id, action: 'save' });
 }
 
 export async function saveTracksBatch(tracks: Track[]): Promise<void> {
-  const db = await getDB();
-  const tx = db.transaction('tracks', 'readwrite');
-  for (const track of tracks) {
-    await tx.store.put(track);
+  tracks.forEach((t) => inMemoryCache.tracks.set(t.id, t));
+  writeLocalJson('tracks', Array.from(inMemoryCache.tracks.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      const tx = db.transaction('tracks', 'readwrite');
+      for (const track of tracks) {
+        await tx.store.put(track);
+      }
+      await tx.done;
+    }
+  } catch (err) {
+    console.warn('[saveTracksBatch IDB notice]:', err);
   }
-  await tx.done;
   emitDBChange('tracks-changed', { count: tracks.length, action: 'batch-save' });
 }
 
 export async function getTrack(id: string): Promise<Track | undefined> {
-  const db = await getDB();
-  return db.get('tracks', id);
+  try {
+    const db = await getDB();
+    if (db) {
+      const t = await db.get('tracks', id);
+      if (t) return t;
+    }
+  } catch {}
+  return inMemoryCache.tracks.get(id);
 }
 
 export async function getAllTracks(): Promise<Track[]> {
-  const db = await getDB();
-  return db.getAllFromIndex('tracks', 'by-added');
+  try {
+    const db = await getDB();
+    if (db) {
+      const tracks = await db.getAll('tracks');
+      if (tracks && tracks.length > 0) {
+        // Sync to memory cache
+        tracks.forEach((t) => inMemoryCache.tracks.set(t.id, t));
+        return tracks.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+      }
+    }
+  } catch (err) {
+    console.warn('[getAllTracks IDB fallback]:', err);
+  }
+  return Array.from(inMemoryCache.tracks.values()).sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
 }
 
 export async function deleteTrack(id: string): Promise<void> {
-  const db = await getDB();
-  await db.delete('tracks', id);
-  // Also clean up any cached audio blob for this track
-  await removeCachedAudioBlob(id).catch(() => {});
+  inMemoryCache.tracks.delete(id);
+  writeLocalJson('tracks', Array.from(inMemoryCache.tracks.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.delete('tracks', id);
+      try {
+        await db.delete('audio_blobs', id);
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('[deleteTrack IDB notice]:', err);
+  }
   emitDBChange('tracks-changed', { trackId: id, action: 'delete' });
 }
 
-export async function toggleLikeTrack(id: string): Promise<boolean> {
-  const db = await getDB();
-  const track = await db.get('tracks', id);
+export async function toggleTrackLiked(id: string): Promise<boolean> {
+  const track = await getTrack(id);
   if (!track) return false;
   track.liked = !track.liked;
-  await db.put('tracks', track);
-  emitDBChange('tracks-changed', { trackId: id, liked: track.liked });
+  await saveTrack(track);
   return track.liked;
 }
 
-// ============================================================================
-// DEDICATED AUDIO BINARY CACHE (Offline Playback System)
-// ============================================================================
-
-export async function cacheAudioBlob(trackId: string, blob: Blob, mimeType = 'audio/mpeg', duration = 0): Promise<void> {
-  const db = await getDB();
-  const now = Date.now();
-  const record: CachedAudioRecord = {
-    id: trackId,
-    blob,
-    mimeType: blob.type || mimeType,
-    size: blob.size,
-    cachedAt: now,
-    lastAccessed: now,
-    duration,
-  };
-  await db.put('audio_blobs', record);
-  emitDBChange('audio-cached', { trackId, size: blob.size });
+export async function getLikedTracks(): Promise<Track[]> {
+  const all = await getAllTracks();
+  return all.filter((t) => Boolean(t.liked));
 }
 
-export async function getCachedAudioBlob(trackId: string): Promise<Blob | null> {
+// ============================================================================
+// AUDIO BLOBS REPOSITORY (Dedicated Offline Binary Audio Cache)
+// ============================================================================
+
+export async function cacheAudioBlob(
+  trackId: string,
+  blob: Blob,
+  mimeType = 'audio/mpeg',
+  duration?: number
+): Promise<void> {
   try {
     const db = await getDB();
+    if (!db) return;
+
+    const record: CachedAudioRecord = {
+      id: trackId,
+      blob,
+      mimeType,
+      size: blob.size,
+      cachedAt: Date.now(),
+      lastAccessed: Date.now(),
+      duration,
+    };
+
+    await db.put('audio_blobs', record);
+    emitDBChange('audio-cached', { trackId, size: blob.size });
+  } catch (err) {
+    console.warn('[cacheAudioBlob quota/storage notice]:', err);
+  }
+}
+
+export async function getCachedAudioBlob(trackId: string): Promise<CachedAudioRecord | undefined> {
+  try {
+    const db = await getDB();
+    if (!db) return undefined;
     const record = await db.get('audio_blobs', trackId);
-    if (!record || !record.blob) return null;
-
-    // Update last accessed in background for LRU management
-    record.lastAccessed = Date.now();
-    db.put('audio_blobs', record).catch(() => {});
-
-    return record.blob;
-  } catch (e) {
-    console.warn('[IndexedDB getCachedAudioBlob error]:', e);
-    return null;
-  }
-}
-
-export async function hasCachedAudio(trackId: string): Promise<boolean> {
-  const db = await getDB();
-  const key = await db.getKey('audio_blobs', trackId);
-  return key !== undefined;
-}
-
-export async function removeCachedAudioBlob(trackId: string): Promise<void> {
-  const db = await getDB();
-  await db.delete('audio_blobs', trackId);
-  emitDBChange('audio-cached', { trackId, action: 'removed' });
-}
-
-export async function getAllCachedAudioIds(): Promise<string[]> {
-  const db = await getDB();
-  const keys = await db.getAllKeys('audio_blobs');
-  return keys as string[];
-}
-
-export async function clearAllCachedAudio(): Promise<number> {
-  const db = await getDB();
-  const count = await db.count('audio_blobs');
-  await db.clear('audio_blobs');
-  emitDBChange('audio-cached', { action: 'cleared', count });
-  return count;
-}
-
-// Evict least-recently-used audio blobs if total cache exceeds byte quota
-export async function evictLruAudioCache(maxBytes = 250 * 1024 * 1024): Promise<number> {
-  const db = await getDB();
-  const allRecords = await db.getAllFromIndex('audio_blobs', 'by-last-accessed');
-  let totalBytes = allRecords.reduce((acc, r) => acc + (r.size || 0), 0);
-
-  let evictedCount = 0;
-  if (totalBytes > maxBytes) {
-    const tx = db.transaction('audio_blobs', 'readwrite');
-    for (const record of allRecords) {
-      if (totalBytes <= maxBytes) break;
-      await tx.store.delete(record.id);
-      totalBytes -= (record.size || 0);
-      evictedCount++;
+    if (record) {
+      record.lastAccessed = Date.now();
+      db.put('audio_blobs', record).catch(() => {});
+      return record;
     }
-    await tx.done;
+  } catch (err) {
+    console.warn('[getCachedAudioBlob notice]:', err);
   }
-  return evictedCount;
+  return undefined;
 }
+
+export async function deleteCachedAudioBlob(trackId: string): Promise<void> {
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.delete('audio_blobs', trackId);
+      emitDBChange('audio-cached', { trackId, action: 'deleted' });
+    }
+  } catch {}
+}
+
+export async function clearAudioCache(): Promise<number> {
+  try {
+    const db = await getDB();
+    if (db) {
+      const count = await db.count('audio_blobs');
+      await db.clear('audio_blobs');
+      emitDBChange('audio-cached', { action: 'cleared', count });
+      return count;
+    }
+  } catch {}
+  return 0;
+}
+
+export const clearAllCachedAudio = clearAudioCache;
 
 // ============================================================================
 // PLAYLISTS REPOSITORY
 // ============================================================================
 
 export async function savePlaylist(playlist: Playlist): Promise<void> {
-  const db = await getDB();
-  await db.put('playlists', playlist);
-  emitDBChange('playlists-changed', { playlistId: playlist.id, action: 'save' });
+  inMemoryCache.playlists.set(playlist.id, playlist);
+  writeLocalJson('playlists', Array.from(inMemoryCache.playlists.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.put('playlists', playlist);
+    }
+  } catch (err) {
+    console.warn('[savePlaylist IDB notice]:', err);
+  }
+  emitDBChange('playlists-changed', { playlistId: playlist.id });
 }
 
 export async function getAllPlaylists(): Promise<Playlist[]> {
-  const db = await getDB();
-  return db.getAll('playlists');
-}
-
-export async function getPlaylist(id: string): Promise<Playlist | undefined> {
-  const db = await getDB();
-  return db.get('playlists', id);
+  try {
+    const db = await getDB();
+    if (db) {
+      const pls = await db.getAll('playlists');
+      if (pls && pls.length > 0) {
+        pls.forEach((p) => inMemoryCache.playlists.set(p.id, p));
+        return pls.sort((a, b) => b.createdAt - a.createdAt);
+      }
+    }
+  } catch {}
+  return Array.from(inMemoryCache.playlists.values()).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function deletePlaylist(id: string): Promise<void> {
-  const db = await getDB();
-  await db.delete('playlists', id);
+  inMemoryCache.playlists.delete(id);
+  writeLocalJson('playlists', Array.from(inMemoryCache.playlists.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.delete('playlists', id);
+    }
+  } catch {}
   emitDBChange('playlists-changed', { playlistId: id, action: 'delete' });
 }
 
@@ -357,7 +494,6 @@ export async function deletePlaylist(id: string): Promise<void> {
 // ============================================================================
 
 export async function saveEqPreset(preset: EQPresetDef): Promise<void> {
-  const db = await getDB();
   const now = Date.now();
   const record: EQPresetDef = {
     ...preset,
@@ -365,18 +501,45 @@ export async function saveEqPreset(preset: EQPresetDef): Promise<void> {
     isCustom: true,
     createdAt: preset.createdAt || now,
   };
-  await db.put('eq_presets', record);
+
+  inMemoryCache.eq_presets.set(record.id!, record);
+  writeLocalJson('eq_presets', Array.from(inMemoryCache.eq_presets.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.put('eq_presets', record);
+    }
+  } catch (err) {
+    console.warn('[saveEqPreset IDB notice]:', err);
+  }
   emitDBChange('presets-changed', { presetId: record.id });
 }
 
 export async function getAllEqPresets(): Promise<EQPresetDef[]> {
-  const db = await getDB();
-  return db.getAll('eq_presets');
+  try {
+    const db = await getDB();
+    if (db) {
+      const presets = await db.getAll('eq_presets');
+      if (presets && presets.length > 0) {
+        presets.forEach((p) => inMemoryCache.eq_presets.set(p.id || p.name, p));
+        return presets;
+      }
+    }
+  } catch {}
+  return Array.from(inMemoryCache.eq_presets.values());
 }
 
 export async function deleteEqPreset(id: string): Promise<void> {
-  const db = await getDB();
-  await db.delete('eq_presets', id);
+  inMemoryCache.eq_presets.delete(id);
+  writeLocalJson('eq_presets', Array.from(inMemoryCache.eq_presets.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.delete('eq_presets', id);
+    }
+  } catch {}
   emitDBChange('presets-changed', { presetId: id, action: 'delete' });
 }
 
@@ -386,7 +549,6 @@ export async function deleteEqPreset(id: string): Promise<void> {
 
 export async function recordPlayHistory(track: Track, completedRatio = 1.0): Promise<void> {
   try {
-    const db = await getDB();
     const now = Date.now();
     const id = `hist_${now}_${track.id}`;
     const record: PlayHistoryRecord = {
@@ -399,22 +561,45 @@ export async function recordPlayHistory(track: Track, completedRatio = 1.0): Pro
       completedRatio: Math.max(0, Math.min(1, completedRatio)),
       duration: track.duration,
     };
-    await db.put('play_history', record);
+
+    inMemoryCache.play_history.set(id, record);
+    writeLocalJson('play_history', Array.from(inMemoryCache.play_history.values()).slice(-200));
+
+    const db = await getDB();
+    if (db) {
+      await db.put('play_history', record);
+    }
     emitDBChange('history-changed', { id });
   } catch (err) {
-    console.warn('[recordPlayHistory error]:', err);
+    console.warn('[recordPlayHistory notice]:', err);
   }
 }
 
 export async function getPlayHistory(limit = 100): Promise<PlayHistoryRecord[]> {
-  const db = await getDB();
-  const all = await db.getAllFromIndex('play_history', 'by-played-at');
-  return all.reverse().slice(0, limit);
+  try {
+    const db = await getDB();
+    if (db) {
+      const all = await db.getAllFromIndex('play_history', 'by-played-at');
+      if (all && all.length > 0) {
+        return all.reverse().slice(0, limit);
+      }
+    }
+  } catch {}
+  return Array.from(inMemoryCache.play_history.values())
+    .sort((a, b) => b.playedAt - a.playedAt)
+    .slice(0, limit);
 }
 
 export async function clearPlayHistory(): Promise<void> {
-  const db = await getDB();
-  await db.clear('play_history');
+  inMemoryCache.play_history.clear();
+  writeLocalJson('play_history', []);
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.clear('play_history');
+    }
+  } catch {}
   emitDBChange('history-changed', { action: 'cleared' });
 }
 
@@ -423,23 +608,65 @@ export async function clearPlayHistory(): Promise<void> {
 // ============================================================================
 
 export async function getStoredSettings(): Promise<Partial<AppSettings> | null> {
-  const db = await getDB();
-  return (await db.get('settings', 'app_config')) || null;
+  try {
+    const db = await getDB();
+    if (db) {
+      const s = await db.get('settings', 'app_config');
+      if (s) return s;
+    }
+  } catch {}
+
+  try {
+    const raw = localStorage.getItem('spotui_settings_v3');
+    if (raw) return JSON.parse(raw);
+  } catch {}
+
+  return inMemoryCache.settings.get('app_config') || null;
 }
 
 export async function saveStoredSettings(settings: AppSettings): Promise<void> {
-  const db = await getDB();
-  await db.put('settings', settings, 'app_config');
+  inMemoryCache.settings.set('app_config', settings);
+  try {
+    localStorage.setItem('spotui_settings_v3', JSON.stringify(settings));
+  } catch {}
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.put('settings', settings, 'app_config');
+    }
+  } catch {}
 }
 
 export async function getStoredValue<T = any>(key: string): Promise<T | null> {
-  const db = await getDB();
-  return (await db.get('settings', key)) || null;
+  try {
+    const db = await getDB();
+    if (db) {
+      const val = await db.get('settings', key);
+      if (val !== undefined) return val;
+    }
+  } catch {}
+
+  try {
+    const raw = localStorage.getItem(`spotui_${key}`);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+
+  return inMemoryCache.settings.get(key) ?? null;
 }
 
 export async function saveStoredValue(key: string, value: any): Promise<void> {
-  const db = await getDB();
-  await db.put('settings', value, key);
+  inMemoryCache.settings.set(key, value);
+  try {
+    localStorage.setItem(`spotui_${key}`, JSON.stringify(value));
+  } catch {}
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.put('settings', value, key);
+    }
+  } catch {}
 }
 
 // ============================================================================
@@ -447,7 +674,6 @@ export async function saveStoredValue(key: string, value: any): Promise<void> {
 // ============================================================================
 
 export async function enqueueSyncOperation(action: SyncQueueItem['action'], payload: any): Promise<string> {
-  const db = await getDB();
   const id = `sync_op_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const item: SyncQueueItem = {
     id,
@@ -456,23 +682,45 @@ export async function enqueueSyncOperation(action: SyncQueueItem['action'], payl
     queuedAt: Date.now(),
     status: 'pending',
   };
-  await db.put('cloud_sync_queue', item);
+
+  inMemoryCache.cloud_sync_queue.set(id, item);
+  writeLocalJson('cloud_sync_queue', Array.from(inMemoryCache.cloud_sync_queue.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      await db.put('cloud_sync_queue', item);
+    }
+  } catch {}
   emitDBChange('sync-queue-changed', { id });
   return id;
 }
 
 export async function getPendingSyncOperations(): Promise<SyncQueueItem[]> {
-  const db = await getDB();
-  return db.getAllFromIndex('cloud_sync_queue', 'by-queued-at');
+  try {
+    const db = await getDB();
+    if (db) {
+      const items = await db.getAllFromIndex('cloud_sync_queue', 'by-queued-at');
+      if (items && items.length > 0) return items;
+    }
+  } catch {}
+  return Array.from(inMemoryCache.cloud_sync_queue.values()).sort((a, b) => a.queuedAt - b.queuedAt);
 }
 
 export async function removeSyncOperations(ids: string[]): Promise<void> {
-  const db = await getDB();
-  const tx = db.transaction('cloud_sync_queue', 'readwrite');
-  for (const id of ids) {
-    await tx.store.delete(id);
-  }
-  await tx.done;
+  ids.forEach((id) => inMemoryCache.cloud_sync_queue.delete(id));
+  writeLocalJson('cloud_sync_queue', Array.from(inMemoryCache.cloud_sync_queue.values()));
+
+  try {
+    const db = await getDB();
+    if (db) {
+      const tx = db.transaction('cloud_sync_queue', 'readwrite');
+      for (const id of ids) {
+        await tx.store.delete(id);
+      }
+      await tx.done;
+    }
+  } catch {}
   emitDBChange('sync-queue-changed', { removedCount: ids.length });
 }
 
@@ -499,15 +747,18 @@ export async function exportFullVault(includeAudioBlobs = false): Promise<string
   };
 
   if (includeAudioBlobs) {
-    const db = await getDB();
-    const blobs = await db.getAll('audio_blobs');
-    // Save metadata of cached audio
-    exportData.audioBlobsMeta = blobs.map((b) => ({
-      id: b.id,
-      size: b.size,
-      mimeType: b.mimeType,
-      cachedAt: b.cachedAt,
-    }));
+    try {
+      const db = await getDB();
+      if (db) {
+        const blobs = await db.getAll('audio_blobs');
+        exportData.audioBlobsMeta = blobs.map((b) => ({
+          id: b.id,
+          size: b.size,
+          mimeType: b.mimeType,
+          cachedAt: b.cachedAt,
+        }));
+      }
+    } catch {}
   }
 
   return JSON.stringify(exportData, null, 2);
@@ -550,25 +801,38 @@ export async function importFullVault(jsonString: string): Promise<{
 }
 
 export async function getStorageMetrics(): Promise<DetailedStorageMetrics> {
-  const db = await getDB();
-  const [tracksCount, playlistsCount, presetsCount, historyCount, audioCacheCount] = await Promise.all([
-    db.count('tracks'),
-    db.count('playlists'),
-    db.count('eq_presets'),
-    db.count('play_history'),
-    db.count('audio_blobs'),
-  ]);
-
+  let tracksCount = inMemoryCache.tracks.size;
+  let playlistsCount = inMemoryCache.playlists.size;
+  let presetsCount = inMemoryCache.eq_presets.size;
+  let historyCount = inMemoryCache.play_history.size;
+  let audioCacheCount = 0;
   let audioCacheBytes = 0;
+
   try {
-    const audioRecords = await db.getAll('audio_blobs');
-    audioCacheBytes = audioRecords.reduce((sum, r) => sum + (r.size || 0), 0);
+    const db = await getDB();
+    if (db) {
+      const [tCount, pCount, eqCount, hCount, aCount] = await Promise.all([
+        db.count('tracks'),
+        db.count('playlists'),
+        db.count('eq_presets'),
+        db.count('play_history'),
+        db.count('audio_blobs'),
+      ]);
+      tracksCount = tCount;
+      playlistsCount = pCount;
+      presetsCount = eqCount;
+      historyCount = hCount;
+      audioCacheCount = aCount;
+
+      const audioRecords = await db.getAll('audio_blobs');
+      audioCacheBytes = audioRecords.reduce((sum, r) => sum + (r.size || 0), 0);
+    }
   } catch {}
 
   let totalUsage = audioCacheBytes;
   let quota = 0;
 
-  if (navigator.storage && navigator.storage.estimate) {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
     try {
       const estimate = await navigator.storage.estimate();
       totalUsage = estimate.usage || totalUsage;

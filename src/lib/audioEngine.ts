@@ -454,7 +454,10 @@ class SpotuiAudioEngine {
     if (track.blob) {
       cachedBlob = track.blob;
     } else {
-      cachedBlob = await getCachedAudioBlob(cleanId);
+      const cachedRecord = await getCachedAudioBlob(cleanId);
+      if (cachedRecord && cachedRecord.blob) {
+        cachedBlob = cachedRecord.blob;
+      }
     }
 
     let targetSrc = '';

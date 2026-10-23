@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   Play,
   Pause,
@@ -234,6 +234,16 @@ export default function App() {
   const [showNovaModal, setShowNovaModal] = useState(false);
   const [showShazamModal, setShowShazamModal] = useState(false);
   const [showDspModal, setShowDspModal] = useState(false);
+  const handleOpenDsp = useCallback(() => {
+    try {
+      const overlay = document.getElementById('anti-screenshot-overlay');
+      if (overlay) {
+        overlay.style.display = 'none';
+        overlay.style.pointerEvents = 'none';
+      }
+    } catch {}
+    setShowDspModal(true);
+  }, []);
   const [showSetupWizard, setShowSetupWizard] = useState(() => {
     return !localStorage.getItem('spotui_setup_completed');
   });
@@ -783,7 +793,7 @@ export default function App() {
         onOpenSync={() => setShowSyncModal(true)}
         onOpenNovaAc={() => setShowNovaModal(true)}
         onOpenShazam={() => setShowShazamModal(true)}
-        onOpenDsp={() => setShowDspModal(true)}
+        onOpenDsp={handleOpenDsp}
         onLaunchCloak={() =>
           launchDedicatedAboutBlank(
             window.location.href,
@@ -952,7 +962,7 @@ export default function App() {
                     </button>
 
                     <button
-                      onClick={() => setShowDspModal(true)}
+                      onClick={handleOpenDsp}
                       className="px-5 py-3 bg-[#0a1b20] hover:bg-[#112a32] text-[#c084fc] border border-[#1d3c45] font-bold rounded-2xl text-xs flex items-center gap-2 transition-colors"
                     >
                       <Sliders size={14} />
@@ -1010,7 +1020,7 @@ export default function App() {
 
                   {/* DSP EQ Card */}
                   <div
-                    onClick={() => setShowDspModal(true)}
+                    onClick={handleOpenDsp}
                     className="p-5 rounded-2xl bg-gradient-to-br from-[#0c2328] to-[#050f11] border border-[#17444d] hover:border-[#48e4ff] hover:-translate-y-1 transition-all cursor-pointer relative overflow-hidden group shadow-lg"
                   >
                     <div className="absolute -right-6 -top-6 w-20 h-20 bg-[#48e4ff]/15 rounded-full blur-xl group-hover:bg-[#48e4ff]/25 transition" />
@@ -1169,7 +1179,7 @@ export default function App() {
               onPlaylistsChange={(updated) => {
                 setPlaylists(updated);
               }}
-              onOpenDsp={() => setShowDspModal(true)}
+              onOpenDsp={handleOpenDsp}
             />
           )}
 
@@ -1369,7 +1379,7 @@ export default function App() {
             <div className="h-full animate-in fade-in duration-300">
               <InvidiousMain
                 onPlayAudioOnly={handlePlayTrack}
-                onOpenDsp={() => setShowDspModal(true)}
+                onOpenDsp={handleOpenDsp}
               />
             </div>
           )}
@@ -1388,7 +1398,7 @@ export default function App() {
                 onAddToQueue={handleAddToQueue}
                 onRemoveFromQueue={handleRemoveFromQueue}
                 onClearQueue={handleClearQueue}
-                onOpenDsp={() => setShowDspModal(true)}
+                onOpenDsp={handleOpenDsp}
               />
             </div>
           )}
@@ -1409,7 +1419,7 @@ export default function App() {
                 volume={settings.playback.volume}
                 onVolumeChange={handleVolumeChange}
                 queue={queue}
-                onOpenDsp={() => setShowDspModal(true)}
+                onOpenDsp={handleOpenDsp}
               />
             </div>
           )}
@@ -1435,7 +1445,7 @@ export default function App() {
                 settings={settings}
                 onUpdateSettings={setSettings}
                 onWipeVault={handleWipeVault}
-                onOpenDsp={() => setShowDspModal(true)}
+                onOpenDsp={handleOpenDsp}
               />
             </div>
           )}
@@ -1457,7 +1467,7 @@ export default function App() {
           onToggleShuffle={handleToggleShuffle}
           onToggleRepeat={handleToggleRepeat}
           onToggleLike={handleToggleLike}
-          onOpenDsp={() => setShowDspModal(true)}
+          onOpenDsp={handleOpenDsp}
         />
       </main>
 

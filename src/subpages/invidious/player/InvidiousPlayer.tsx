@@ -932,9 +932,9 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
         {/* Tab 1: Related Videos */}
         {activeTab === 'related' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {(metadata.relatedVideos || []).map((rel) => (
+            {(metadata.relatedVideos || []).map((rel, idx) => (
               <div
-                key={rel.id}
+                key={rel.id ? `rel_${rel.id}_${idx}` : `rel_item_${idx}`}
                 onClick={() => onSelectVideo(rel.id)}
                 className="p-3 rounded-2xl bg-[#091b20] border border-[#163640] hover:border-[#f43f5e] transition cursor-pointer flex gap-3 group"
               >
@@ -972,7 +972,7 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
               </div>
             ) : (
               comments.map((c, i) => (
-                <div key={i} className="p-3.5 rounded-2xl bg-[#091b20] border border-[#163640] space-y-1.5">
+                <div key={c.commentId ? `comment_${c.commentId}_${i}` : `comment_${i}`} className="p-3.5 rounded-2xl bg-[#091b20] border border-[#163640] space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-bold text-white">{c.author}</span>
                     <span className="text-[10px] font-mono text-zinc-500">{c.publishedText}</span>

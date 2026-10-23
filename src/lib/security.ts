@@ -354,7 +354,7 @@ export function initSecurityEngine(settings: AppSettings) {
       left: 0;
       width: 100vw;
       height: 100vh;
-      background: #000000;
+      background: rgba(0, 0, 0, 0.96);
       z-index: 2147483647;
       display: none;
       align-items: center;
@@ -362,24 +362,31 @@ export function initSecurityEngine(settings: AppSettings) {
       color: #38bdf8;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       letter-spacing: 1.5px;
-      pointer-events: all;
+      pointer-events: none;
       user-select: none;
       -webkit-user-select: none;
-      backdrop-filter: blur(50px);
+      backdrop-filter: blur(25px);
+      cursor: pointer;
     `;
     overlay.innerHTML = `
-      <div style="text-align: center; border: 1px solid #1e293b; padding: 32px 48px; border-radius: 20px; background: #020617; box-shadow: 0 0 100px rgba(0,0,0,1);">
-        <div style="color: #ef4444; font-weight: 800; margin-bottom: 10px; font-size: 18px; letter-spacing: 2px;">
+      <div style="text-align: center; border: 1px solid #1e293b; padding: 28px 40px; border-radius: 20px; background: #020617; box-shadow: 0 0 100px rgba(0,0,0,1);">
+        <div style="color: #ef4444; font-weight: 800; margin-bottom: 10px; font-size: 16px; letter-spacing: 2px;">
           [ HARDENED DRM & LINEWIZE BYPASS SHIELD ]
         </div>
         <div style="color: #94a3b8; font-size: 13px; margin-top: 4px; font-weight: 600;">
-          SCREEN CAPTURE / EXTENSION RECORDING / TAB CLOSE INTERCEPTED & BLACKED OUT
+          EXTERNAL SCREEN CAPTURE OR EXTENSION SCANNER INTERCEPTED
         </div>
         <div style="color: #48e4ff; font-size: 11px; margin-top: 12px; font-family: monospace;">
-          PROTECTED BY 6 WEB WORKERS • WSM ZERO-KNOWLEDGE BYTECODE CORE • CHROMEBOOK & WINDOWS GUARD
+          Click anywhere or press Esc to return to player
         </div>
       </div>
     `;
+    overlay.addEventListener('click', () => {
+      if (overlay) {
+        overlay.style.display = 'none';
+        overlay.style.pointerEvents = 'none';
+      }
+    });
     document.body.appendChild(overlay);
   }
 
@@ -409,19 +416,32 @@ export function initSecurityEngine(settings: AppSettings) {
     document.head.appendChild(printStyle);
   }
 
+  let shieldTimer: any = null;
   const showShield = () => {
+    // Whitelist active modals: If DSP modal or setup wizard or any dialog is active, never blank out
+    const isModalActive = document.querySelector('#audio-dsp-modal') || document.querySelector('[role="dialog"]') || document.querySelector('.fixed.inset-0');
+    if (isModalActive && !document.hidden) return;
+
     if (overlay && settings.security.antiScreenshotEnabled) {
       overlay.style.display = 'flex';
+      overlay.style.pointerEvents = 'auto';
+      clearTimeout(shieldTimer);
+      shieldTimer = setTimeout(hideShield, 2500);
     }
   };
 
   const hideShield = () => {
-    if (overlay) overlay.style.display = 'none';
+    if (overlay) {
+      overlay.style.display = 'none';
+      overlay.style.pointerEvents = 'none';
+    }
   };
 
   // 4. Focus, Blur, Visibility, and Pointer Event Guards
   const handleBlur = () => {
-    if (settings.security.blurSensitivity !== 'standard') {
+    // In iframe and preview environments, blur fires frequently on internal clicks.
+    // Only engage if strictly set and antiScreenshotEnabled is explicitly active.
+    if (settings.security.blurSensitivity === 'ultra-paranoia' && settings.security.antiScreenshotEnabled) {
       showShield();
     }
   };
@@ -431,7 +451,7 @@ export function initSecurityEngine(settings: AppSettings) {
   };
 
   const handleVisibilityChange = () => {
-    if (document.hidden) {
+    if (document.hidden && settings.security.antiScreenshotEnabled) {
       showShield();
     } else {
       hideShield();

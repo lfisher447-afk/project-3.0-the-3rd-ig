@@ -3,7 +3,8 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { Innertube, UniversalCache } from "youtubei.js";
+import { Readable } from "stream";
+import { Innertube, UniversalCache, Platform } from "youtubei.js";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { handleProxyRequest, turboCache } from "./server/proxyEngine.js";
@@ -11,6 +12,12 @@ import { securityHeadersMiddleware, crawlerFirewallMiddleware, securityRouter } 
 import { cloudSyncRouter } from "./server/cloudSyncServer.js";
 
 dotenv.config();
+
+// Custom JavaScript evaluator required for YouTube.js to decipher URLs and download streams
+Platform.shim.eval = async (data: any, env: Record<string, any>) => {
+  const code = `${data.output}\nreturn { ...env };`;
+  return new Function("env", code)(env);
+};
 
 async function startServer() {
   const app = express();
@@ -1277,25 +1284,65 @@ async function startServer() {
     }
 
     try {
-      // 1. Try Innertube decipher if available
+      // 1. Primary Engine: Direct YouTube Decrypted Stream via Innertube download
       if (yt) {
         try {
-          const info = await yt.getInfo(videoId);
-          const formats = info.streaming_data?.formats || [];
-          const matched = formats.find((f: any) => f.quality_label?.includes(targetRes)) || formats[0];
-          if (matched && matched.decipher) {
-            const deciphered = await matched.decipher(yt.session.player);
-            if (deciphered) {
-              const success = await pipeMediaStream(deciphered, req, res, matched.mime_type || "video/mp4");
-              if (success) return;
-            }
+          const webStream = await yt.download(videoId, {
+            type: "video+audio",
+            quality: "best",
+          });
+          if (webStream) {
+            res.setHeader("Content-Type", "video/mp4");
+            res.setHeader("Accept-Ranges", "bytes");
+            res.setHeader("Cache-Control", "public, max-age=86400");
+            const nodeStream = Readable.fromWeb(webStream as any);
+            req.on("close", () => {
+              try {
+                nodeStream.destroy();
+              } catch {}
+            });
+            nodeStream.pipe(res);
+            return;
           }
         } catch (innerErr: any) {
-          console.warn("[Innertube Stream Decipher failure for video, trying fallbacks]:", innerErr?.message);
+          console.warn(`[Innertube Video Direct Download notice for ${videoId}]:`, innerErr?.message);
+          if (
+            innerErr?.message?.includes("login required") ||
+            innerErr?.info?.error_type === "LOGIN_REQUIRED"
+          ) {
+            if (!res.headersSent) {
+              return res.status(403).json({
+                error: "LOGIN_REQUIRED",
+                message: "This official music video is marked 'Login Required' by YouTube for datacenter IPs. Please play in Audio DSP Mode or Invidious Cinema.",
+                videoId,
+              });
+            }
+          }
         }
       }
 
-      // 2. Query Invidious Nodes for direct video stream URLs
+      // 2. Secondary Engine: Try deciphering formats from Innertube basic info
+      if (yt) {
+        try {
+          const basicInfo = await yt.getBasicInfo(videoId);
+          const formats = basicInfo.streaming_data?.formats || [];
+          const matched = formats.find((f: any) => f.quality_label?.includes(targetRes)) || formats[0];
+          if (matched) {
+            let streamUrl = matched.url;
+            if (!streamUrl && matched.decipher) {
+              streamUrl = await matched.decipher(yt.session.player);
+            }
+            if (streamUrl) {
+              const success = await pipeMediaStream(streamUrl, req, res, matched.mime_type || "video/mp4");
+              if (success) return;
+            }
+          }
+        } catch (decipherErr: any) {
+          console.warn(`[Innertube Decipher fallback notice]:`, decipherErr?.message);
+        }
+      }
+
+      // 3. Tertiary Engine: Query Working Invidious Nodes for direct video stream URLs
       const invidiousStreamNodesList = [
         "https://invidious.nerdvpn.de",
         "https://invidious.tiekoetter.com",
@@ -1329,7 +1376,7 @@ async function startServer() {
         }
       }
 
-      // 3. Query Cobalt API nodes for direct high-speed video streams
+      // 4. Cobalt API nodes for direct high-speed video streams
       const cobaltNodes = [
         "https://api.cobalt.tools",
         "https://cobalt-api.kwiatekm.tokyo",
@@ -1338,7 +1385,7 @@ async function startServer() {
       for (const cNode of cobaltNodes) {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 3000);
+          const timeout = setTimeout(() => controller.abort(), 2500);
           const cRes = await fetch(`${cNode}/api/json`, {
             method: "POST",
             headers: {
@@ -1363,7 +1410,7 @@ async function startServer() {
         } catch {}
       }
 
-      // 4. Query Piped Nodes for video streams
+      // 5. Query Piped Nodes for video streams
       const pipedStreamNodesList = [
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.adminforge.de",
@@ -1386,16 +1433,14 @@ async function startServer() {
               if (success) return;
             }
           }
-        } catch {
-          // Fall through to next available node
-        }
+        } catch {}
       }
 
-      // No fake video fallback: return 503 so client player auto-switches to YouTube embed / Invidious player
+      // No fake video / No rabbit fallback: Return structured 503 so client player seamlessly switches to Audio DSP
       if (!res.headersSent) {
         res.status(503).json({
           error: "PROXY_STREAM_UNAVAILABLE",
-          message: "Native proxy stream requires YouTube Embed or Invidious player mode.",
+          message: "Video proxy stream is currently restricted by upstream nodes. Swapping to high-fidelity Audio DSP mode.",
           videoId,
         });
       }

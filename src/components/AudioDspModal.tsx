@@ -85,32 +85,59 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
     return unsub;
   }, [isOpen]);
 
+  // Safe settings accessors to prevent any render crash
+  const eqSettings = settings?.eq || {
+    enabled: true,
+    bandCount: 5,
+    gains: [0, 0, 0, 0, 0],
+    modeGains: { 5: [0, 0, 0, 0, 0] },
+    bass: 0,
+    lowMid: 0,
+    vocal: 0,
+    highMid: 0,
+    treble: 0,
+    preAmpGain: 0,
+    autoGainCompensation: true,
+  };
+
+  const spatialSettings = settings?.spatial || {
+    mode: 'off' as SpatialMode,
+    stereoWidth: 100,
+    reverbWet: 0.1,
+  };
+
+  const compressorSettings = settings?.compressor || {
+    enabled: true,
+    threshold: -12,
+    ratio: 3,
+  };
+
   // Active band count and configuration
-  const activeBandCount: EQBandCount = settings.eq.bandCount || 5;
+  const activeBandCount: EQBandCount = (eqSettings.bandCount as EQBandCount) || 5;
   const currentBandDefs = useMemo(() => {
     return BAND_CONFIGURATIONS[activeBandCount] || BAND_CONFIGURATIONS[5];
   }, [activeBandCount]);
 
   // Current active gains array for the current band count
   const currentGains = useMemo(() => {
-    if (Array.isArray(settings.eq.gains) && settings.eq.gains.length === activeBandCount) {
-      return settings.eq.gains;
+    if (Array.isArray(eqSettings.gains) && eqSettings.gains.length === activeBandCount) {
+      return eqSettings.gains.map((g) => (typeof g === 'number' && !isNaN(g) ? g : 0));
     }
-    if (settings.eq.modeGains && settings.eq.modeGains[activeBandCount]) {
-      return settings.eq.modeGains[activeBandCount]!;
+    if (eqSettings.modeGains && Array.isArray(eqSettings.modeGains[activeBandCount])) {
+      return eqSettings.modeGains[activeBandCount]!.map((g) => (typeof g === 'number' && !isNaN(g) ? g : 0));
     }
     // Fallback if legacy 5-band properties exist
     if (activeBandCount === 5) {
       return [
-        settings.eq.bass ?? 0,
-        settings.eq.lowMid ?? 0,
-        settings.eq.vocal ?? 0,
-        settings.eq.highMid ?? 0,
-        settings.eq.treble ?? 0,
+        eqSettings.bass ?? 0,
+        eqSettings.lowMid ?? 0,
+        eqSettings.vocal ?? 0,
+        eqSettings.highMid ?? 0,
+        eqSettings.treble ?? 0,
       ];
     }
     return new Array(activeBandCount).fill(0);
-  }, [settings.eq, activeBandCount]);
+  }, [eqSettings, activeBandCount]);
 
   // Calculated auto gain offset
   const autoGainOffset = useMemo(() => {
@@ -384,138 +411,137 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
     if (!ctx) return;
 
     const render = () => {
-      const freqData = audioEngine.getFrequencyData();
-      const width = canvas.width;
-      const height = canvas.height;
+      try {
+        const freqData = audioEngine.getFrequencyData();
+        const width = canvas.width;
+        const height = canvas.height;
 
-      // Track compressor gain reduction and peak frequency
-      const red = audioEngine.getCompressionReduction();
-      setGainReductionDb(Math.round(red * 10) / 10);
+        // Track compressor gain reduction and peak frequency
+        const red = audioEngine.getCompressionReduction();
+        setGainReductionDb(Math.round(red * 10) / 10);
 
-      let maxBinVal = 0;
-      let maxBinIdx = 0;
-      for (let i = 0; i < freqData.length; i++) {
-        if (freqData[i] > maxBinVal) {
-          maxBinVal = freqData[i];
-          maxBinIdx = i;
+        let maxBinVal = 0;
+        let maxBinIdx = 0;
+        for (let i = 0; i < freqData.length; i++) {
+          if (freqData[i] > maxBinVal) {
+            maxBinVal = freqData[i];
+            maxBinIdx = i;
+          }
         }
-      }
-      if (maxBinVal > 30) {
-        const nyquist = 24000;
-        const estHz = Math.round((maxBinIdx / freqData.length) * nyquist);
-        setPeakFrequencyHz(estHz);
-      }
+        if (maxBinVal > 30) {
+          const nyquist = 24000;
+          const estHz = Math.round((maxBinIdx / freqData.length) * nyquist);
+          setPeakFrequencyHz(estHz);
+        }
 
-      ctx.clearRect(0, 0, width, height);
+        ctx.clearRect(0, 0, width, height);
 
-      // Grid background lines
-      ctx.strokeStyle = 'rgba(72, 228, 255, 0.07)';
-      ctx.lineWidth = 1;
+        // Grid background lines
+        ctx.strokeStyle = 'rgba(72, 228, 255, 0.07)';
+        ctx.lineWidth = 1;
 
-      // Horizontal dB guidelines (+12dB, +6dB, 0dB, -6dB, -12dB)
-      const dBLabels = ['+12dB', '+6dB', '0dB', '-6dB', '-12dB'];
-      const dbYSteps = [
-        0.08 * height,
-        0.28 * height,
-        0.5 * height,
-        0.72 * height,
-        0.92 * height,
-      ];
+        // Horizontal dB guidelines (+12dB, +6dB, 0dB, -6dB, -12dB)
+        const dBLabels = ['+12dB', '+6dB', '0dB', '-6dB', '-12dB'];
+        const dbYSteps = [
+          0.08 * height,
+          0.28 * height,
+          0.5 * height,
+          0.72 * height,
+          0.92 * height,
+        ];
 
-      dbYSteps.forEach((y, i) => {
-        ctx.beginPath();
-        ctx.setLineDash([4, 4]);
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        dbYSteps.forEach((y, i) => {
+          ctx.beginPath();
+          ctx.setLineDash([4, 4]);
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
+          ctx.setLineDash([]);
 
-        ctx.fillStyle = i === 2 ? 'rgba(72, 228, 255, 0.4)' : 'rgba(120, 157, 154, 0.25)';
-        ctx.font = '9px monospace';
-        ctx.fillText(dBLabels[i], 8, y - 2);
-      });
-
-      // Frequency spectrum bars (64 bars)
-      const barCount = 64;
-      const barSpacing = 2;
-      const barWidth = (width - (barCount - 1) * barSpacing) / barCount;
-
-      for (let i = 0; i < barCount; i++) {
-        const dataIndex = Math.floor((i / barCount) * (freqData.length * 0.8));
-        const val = freqData[dataIndex] || 0;
-        const percent = val / 255;
-        const barHeight = Math.max(2, percent * (height * 0.85));
-
-        const x = i * (barWidth + barSpacing);
-        const y = height - barHeight;
-
-        const grad = ctx.createLinearGradient(0, height, 0, 0);
-        grad.addColorStop(0, '#04171d');
-        grad.addColorStop(0.3, '#0e4250');
-        grad.addColorStop(0.7, '#38bdf8');
-        grad.addColorStop(1, '#86efac');
-
-        ctx.fillStyle = grad;
-        ctx.fillRect(x, y, barWidth, barHeight);
-      }
-
-      // Draw active multi-band response curve overlay
-      if (settings.eq.enabled && currentBandDefs.length > 0) {
-        ctx.beginPath();
-        ctx.strokeStyle = '#48e4ff';
-        ctx.lineWidth = 2.5;
-        ctx.shadowColor = '#48e4ff';
-        ctx.shadowBlur = 10;
-
-        const numBands = currentBandDefs.length;
-        const points: { x: number; y: number }[] = [];
-
-        currentBandDefs.forEach((def, idx) => {
-          const gain = currentGains[idx] ?? 0;
-          // Logarithmic X coordinate approximation across spectrum
-          const logMin = Math.log10(20);
-          const logMax = Math.log10(20000);
-          const logF = Math.log10(Math.max(20, Math.min(20000, def.freq)));
-          const normX = (logF - logMin) / (logMax - logMin);
-
-          const ptX = normX * (width - 40) + 20;
-          // Gain mapping: +12dB -> top (0.1*height), 0dB -> middle (0.5*height), -12dB -> bottom (0.9*height)
-          const ptY = height * 0.5 - (gain / 12) * (height * 0.4);
-
-          points.push({ x: ptX, y: ptY });
+          ctx.fillStyle = i === 2 ? 'rgba(72, 228, 255, 0.4)' : 'rgba(120, 157, 154, 0.25)';
+          ctx.font = '9px monospace';
+          ctx.fillText(dBLabels[i], 8, y - 2);
         });
 
-        // Smooth cubic bezier spline through band points
-        if (points.length > 0) {
-          ctx.moveTo(points[0].x, points[0].y);
-          for (let i = 0; i < points.length - 1; i++) {
-            const p0 = i > 0 ? points[i - 1] : points[i];
-            const p1 = points[i];
-            const p2 = points[i + 1];
-            const p3 = i < points.length - 2 ? points[i + 2] : p2;
+        // Frequency spectrum bars (64 bars)
+        const barCount = 64;
+        const barSpacing = 2;
+        const barWidth = (width - (barCount - 1) * barSpacing) / barCount;
 
-            const cp1x = p1.x + (p2.x - p0.x) / 6;
-            const cp1y = p1.y + (p2.y - p0.y) / 6;
-            const cp2x = p2.x - (p3.x - p1.x) / 6;
-            const cp2y = p2.y - (p3.y - p1.y) / 6;
+        for (let i = 0; i < barCount; i++) {
+          const dataIndex = Math.floor((i / barCount) * (freqData.length * 0.8));
+          const val = freqData[dataIndex] || 0;
+          const percent = val / 255;
+          const barHeight = Math.max(2, percent * (height * 0.85));
 
-            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-          }
-          ctx.stroke();
+          const x = i * (barWidth + barSpacing);
+          const y = height - barHeight;
 
-          // Draw node dots at each band frequency
-          points.forEach((pt, i) => {
-            ctx.beginPath();
-            ctx.fillStyle = '#ffffff';
-            ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#0e3843';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-          });
+          const grad = ctx.createLinearGradient(0, height, 0, 0);
+          grad.addColorStop(0, '#04171d');
+          grad.addColorStop(0.3, '#0e4250');
+          grad.addColorStop(0.7, '#38bdf8');
+          grad.addColorStop(1, '#86efac');
+
+          ctx.fillStyle = grad;
+          ctx.fillRect(x, y, barWidth, barHeight);
         }
 
-        ctx.shadowBlur = 0;
+        // Draw active multi-band response curve overlay
+        if (eqSettings.enabled && currentBandDefs.length > 0) {
+          ctx.beginPath();
+          ctx.strokeStyle = '#48e4ff';
+          ctx.lineWidth = 2.5;
+          ctx.shadowColor = '#48e4ff';
+          ctx.shadowBlur = 10;
+
+          const points: { x: number; y: number }[] = [];
+
+          currentBandDefs.forEach((def, idx) => {
+            const gain = currentGains[idx] ?? 0;
+            const logMin = Math.log10(20);
+            const logMax = Math.log10(20000);
+            const logF = Math.log10(Math.max(20, Math.min(20000, def.freq)));
+            const normX = (logF - logMin) / (logMax - logMin);
+
+            const ptX = normX * (width - 40) + 20;
+            const ptY = height * 0.5 - (gain / 12) * (height * 0.4);
+
+            points.push({ x: ptX, y: ptY });
+          });
+
+          if (points.length > 0) {
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 0; i < points.length - 1; i++) {
+              const p0 = i > 0 ? points[i - 1] : points[i];
+              const p1 = points[i];
+              const p2 = points[i + 1];
+              const p3 = i < points.length - 2 ? points[i + 2] : p2;
+
+              const cp1x = p1.x + (p2.x - p0.x) / 6;
+              const cp1y = p1.y + (p2.y - p0.y) / 6;
+              const cp2x = p2.x - (p3.x - p1.x) / 6;
+              const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+              ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+            }
+            ctx.stroke();
+
+            points.forEach((pt) => {
+              ctx.beginPath();
+              ctx.fillStyle = '#ffffff';
+              ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.strokeStyle = '#0e3843';
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+            });
+          }
+
+          ctx.shadowBlur = 0;
+        }
+      } catch (err) {
+        // Suppress any non-fatal animation frame draw glitches
       }
 
       animationFrameId = requestAnimationFrame(render);
@@ -527,7 +553,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
       cancelAnimationFrame(animationFrameId);
       audioEngine.stopTestTone();
     };
-  }, [isOpen, settings.eq, activeBandCount, currentGains, currentBandDefs]);
+  }, [isOpen, eqSettings.enabled, activeBandCount, currentGains, currentBandDefs]);
 
   if (!isOpen) return null;
 
@@ -544,7 +570,6 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
       id?: string;
     }> = [];
 
-    // Add custom presets
     customPresets.forEach((cp) => {
       list.push({
         key: cp.id || cp.name,
@@ -558,7 +583,6 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
       });
     });
 
-    // Add master presets
     Object.entries(MASTER_EQ_PRESETS).forEach(([key, p]) => {
       list.push({
         key,
@@ -581,7 +605,12 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
   }, [customPresets, presetCategory, presetSearch, activeBandCount]);
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 md:p-6 select-none animate-in fade-in duration-200">
+    <div
+      id="audio-dsp-modal"
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 md:p-6 select-none animate-in fade-in duration-200"
+    >
       <div className="bg-gradient-to-b from-[#09171b] via-[#061215] to-[#040e11] border border-[#234b54] rounded-3xl w-full max-w-5xl p-5 md:p-8 shadow-[0_25px_80px_rgba(0,0,0,0.9)] relative overflow-hidden flex flex-col max-h-[94vh]">
         {/* Ambient Top Glow */}
         <div className="absolute -top-32 -right-32 w-96 h-96 bg-[#48e4ff]/15 rounded-full blur-3xl pointer-events-none" />
@@ -686,13 +715,13 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                 }))
               }
               className={`w-12 h-6 rounded-full p-1 transition-colors flex items-center cursor-pointer ${
-                settings.eq.enabled ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                eqSettings.enabled ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
               }`}
               title="Toggle Master DSP Active / Bypass"
             >
               <div
                 className={`w-4 h-4 rounded-full transition-transform ${
-                  settings.eq.enabled ? 'translate-x-6 bg-[#051a20]' : 'bg-[#789d9a]'
+                  eqSettings.enabled ? 'translate-x-6 bg-[#051a20]' : 'bg-[#789d9a]'
                 }`}
               />
             </button>
@@ -705,13 +734,13 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
           <div className="p-4 rounded-2xl bg-[#051114] border border-[#16363e] relative overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2.5">
-                <span className={`w-2.5 h-2.5 rounded-full ${settings.eq.enabled ? 'bg-[#48e4ff] animate-pulse' : 'bg-zinc-600'}`} />
+                <span className={`w-2.5 h-2.5 rounded-full ${eqSettings.enabled ? 'bg-[#48e4ff] animate-pulse' : 'bg-zinc-600'}`} />
                 <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
                   Live Master Bus FFT Spectrum & {activeBandCount}-Band Curve Plot
                 </span>
-                {settings.eq.activePreset && (
+                {eqSettings.activePreset && (
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/70 border border-cyan-800 text-cyan-300">
-                    Preset: {settings.eq.activePreset}
+                    Preset: {eqSettings.activePreset}
                   </span>
                 )}
               </div>
@@ -720,7 +749,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                 {peakFrequencyHz > 0 && (
                   <span className="text-emerald-400 font-bold">Peak: {formatFreq(peakFrequencyHz)}</span>
                 )}
-                {settings.eq.autoGainCompensation && (
+                {eqSettings.autoGainCompensation && (
                   <span className="text-cyan-300 font-bold">Auto-Comp: {autoGainOffset > 0 ? `+${autoGainOffset}` : autoGainOffset}dB</span>
                 )}
                 <span>20Hz - 20kHz</span>
@@ -865,7 +894,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                         }))
                       }
                       className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        settings.eq.autoGainCompensation
+                        eqSettings.autoGainCompensation
                           ? 'bg-emerald-500/20 text-[#34d399] border border-emerald-500/40'
                           : 'bg-[#0a1e24] text-zinc-400 border border-[#193d47]'
                       }`}
@@ -883,7 +912,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                       min="-12"
                       max="12"
                       step="0.5"
-                      value={settings.eq.preAmpGain ?? 0}
+                      value={eqSettings.preAmpGain ?? 0}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value);
                         onUpdateSettings((prev) => ({
@@ -894,7 +923,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                       className="w-20 accent-[#48e4ff] cursor-pointer"
                     />
                     <span className="text-[11px] font-mono text-[#48e4ff] font-bold w-12 text-right">
-                      {(settings.eq.preAmpGain ?? 0) > 0 ? `+${settings.eq.preAmpGain}` : settings.eq.preAmpGain ?? 0}dB
+                      {(eqSettings.preAmpGain ?? 0) > 0 ? `+${eqSettings.preAmpGain}` : eqSettings.preAmpGain ?? 0}dB
                     </span>
                   </div>
                 </div>
@@ -1119,7 +1148,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     { id: 'hall', label: 'Symphony Hall', desc: 'Grand Reverb Tail' },
                     { id: 'club', label: 'Binaural Club', desc: 'Sub & Venues Pan' },
                   ].map((m) => {
-                    const isSelected = settings.spatial.mode === m.id;
+                    const isSelected = spatialSettings.mode === m.id;
                     return (
                       <button
                         key={m.id}
@@ -1149,7 +1178,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                   <div className="flex items-center justify-between text-xs text-white">
                     <span className="font-bold">Stereo Width Multiplier:</span>
                     <span className="font-mono text-[#48e4ff] font-bold">
-                      {settings.spatial.stereoWidth}%
+                      {spatialSettings.stereoWidth}%
                     </span>
                   </div>
                   <input
@@ -1157,7 +1186,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     min="0"
                     max="200"
                     step="5"
-                    value={settings.spatial.stereoWidth}
+                    value={spatialSettings.stereoWidth}
                     onChange={(e) => {
                       const w = parseInt(e.target.value);
                       onUpdateSettings((prev) => ({
@@ -1179,7 +1208,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                   <div className="flex items-center justify-between text-xs text-white">
                     <span className="font-bold">Acoustic Room Wetness:</span>
                     <span className="font-mono text-[#34d399] font-bold">
-                      {Math.round((settings.spatial.reverbWet ?? 0.1) * 100)}%
+                      {Math.round((spatialSettings.reverbWet ?? 0.1) * 100)}%
                     </span>
                   </div>
                   <input
@@ -1187,7 +1216,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     min="0"
                     max="1"
                     step="0.05"
-                    value={settings.spatial.reverbWet ?? 0.1}
+                    value={spatialSettings.reverbWet ?? 0.1}
                     onChange={(e) => {
                       const rw = parseFloat(e.target.value);
                       onUpdateSettings((prev) => ({
@@ -1206,10 +1235,10 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                       Convolver: 32-Bit Float HRTF
                     </span>
                     <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                      Delay: {settings.spatial.mode === 'immersive' ? '22ms' : '15ms'}
+                      Delay: {spatialSettings.mode === 'immersive' ? '22ms' : '15ms'}
                     </span>
                     <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/30">
-                      Room: {settings.spatial.mode.toUpperCase()}
+                      Room: {spatialSettings.mode.toUpperCase()}
                     </span>
                   </div>
 
@@ -1259,12 +1288,12 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                       }))
                     }
                     className={`w-12 h-6 rounded-full p-1 transition-colors flex items-center cursor-pointer ${
-                      settings.compressor.enabled ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
+                      compressorSettings.enabled ? 'bg-[#48e4ff]' : 'bg-[#152e34]'
                     }`}
                   >
                     <div
                       className={`w-4 h-4 rounded-full transition-transform ${
-                        settings.compressor.enabled ? 'translate-x-6 bg-[#051a20]' : 'bg-[#789d9a]'
+                        compressorSettings.enabled ? 'translate-x-6 bg-[#051a20]' : 'bg-[#789d9a]'
                       }`}
                     />
                   </button>
@@ -1292,7 +1321,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     <div className="flex items-center justify-between text-xs text-white font-bold">
                       <span>Threshold Level:</span>
                       <span className="font-mono text-[#48e4ff]">
-                        {settings.compressor.threshold} dB
+                        {compressorSettings.threshold} dB
                       </span>
                     </div>
                     <input
@@ -1300,8 +1329,8 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                       min="-50"
                       max="0"
                       step="1"
-                      disabled={!settings.compressor.enabled}
-                      value={settings.compressor.threshold}
+                      disabled={!compressorSettings.enabled}
+                      value={compressorSettings.threshold}
                       onChange={(e) => {
                         const t = parseInt(e.target.value);
                         onUpdateSettings((prev) => ({
@@ -1317,7 +1346,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     <div className="flex items-center justify-between text-xs text-white font-bold">
                       <span>Compression Ratio:</span>
                       <span className="font-mono text-[#48e4ff]">
-                        {settings.compressor.ratio}:1
+                        {compressorSettings.ratio}:1
                       </span>
                     </div>
                     <input
@@ -1325,8 +1354,8 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                       min="1"
                       max="20"
                       step="0.5"
-                      disabled={!settings.compressor.enabled}
-                      value={settings.compressor.ratio}
+                      disabled={!compressorSettings.enabled}
+                      value={compressorSettings.ratio}
                       onChange={(e) => {
                         const r = parseFloat(e.target.value);
                         onUpdateSettings((prev) => ({

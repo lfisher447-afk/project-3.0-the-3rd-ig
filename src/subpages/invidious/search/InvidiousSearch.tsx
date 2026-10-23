@@ -106,11 +106,11 @@ export const InvidiousSearch: React.FC<InvidiousSearchProps> = ({
       {/* Results Grid */}
       {results.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {results.map((video) => {
+          {results.map((video, idx) => {
             const isSaved = !!savedIds[video.id];
             return (
               <div
-                key={video.id}
+                key={video.id ? `search_${video.id}_${idx}` : `search_item_${idx}`}
                 className="p-4 rounded-3xl bg-[#07171a] border border-[#14333b] hover:border-[#f43f5e]/60 transition-all group flex flex-col justify-between shadow-xl"
               >
                 <div>

@@ -49,7 +49,7 @@ export const YtPlayerView: React.FC<YtPlayerViewProps> = ({
   onOpenDsp,
 }) => {
   const [urlInput, setUrlInput] = useState('');
-  const [currentVideoId, setCurrentVideoId] = useState('4NRXx6U8ABQ'); // Blinding Lights by default
+  const [currentVideoId, setCurrentVideoId] = useState('dQw4w9WgXcQ'); // Worldwide streamable showcase
   const [videoInfo, setVideoInfo] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');

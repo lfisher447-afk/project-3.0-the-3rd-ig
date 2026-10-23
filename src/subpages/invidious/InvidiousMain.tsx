@@ -161,9 +161,9 @@ export const InvidiousMain: React.FC<InvidiousMainProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {trendingVideos.map((video) => (
+            {trendingVideos.map((video, idx) => (
               <div
-                key={video.id}
+                key={video.id ? `trending_${video.id}_${idx}` : `trending_item_${idx}`}
                 onClick={() => handleLoadVideo(video.id)}
                 className="p-4 rounded-3xl bg-[#07171a] border border-[#15343c] hover:border-[#f43f5e] hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between shadow-xl"
               >
