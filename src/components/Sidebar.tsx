@@ -16,6 +16,7 @@ import {
   Disc,
   Server,
   Sparkles,
+  Film,
 } from 'lucide-react';
 import { ThemePalette } from '../types';
 import { PALETTES } from '../lib/theme';
@@ -27,6 +28,7 @@ interface SidebarProps {
   onOpenNovaAc: () => void;
   onOpenShazam: () => void;
   onOpenDsp: () => void;
+  onOpenChangelog?: () => void;
   onLaunchCloak: () => void;
   isSpotifyConnected: boolean;
   palette: ThemePalette;
@@ -39,12 +41,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenNovaAc,
   onOpenShazam,
   onOpenDsp,
+  onOpenChangelog,
   onLaunchCloak,
   palette,
 }) => {
   const currentTheme = PALETTES[palette] || PALETTES.cyan;
   const navItems = [
     { id: 'home', icon: Home, label: 'Signal Deck', desc: 'Overview & telemetry' },
+    { id: 'movies', icon: Film, label: 'Movies & Series', badge: '15+ Servers', desc: 'TMDB Cinema Hub' },
     { id: 'yt-music', icon: Music, label: 'YouTube Music', badge: 'Opus 48k', desc: 'Hi-Fi streams' },
     { id: 'yt-player', icon: Youtube, label: 'Invidious Cinema', badge: '12 Mirrors', desc: 'No-ad video player' },
     { id: 'spotify', icon: Music2, label: 'Spotify Bridge', badge: 'Keyless', desc: 'Playlists & albums' },
@@ -173,7 +177,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Stealth Panic Button & Status */}
-      <div className="mt-auto pt-4 border-t border-slate-800/80 space-y-3">
+      <div className="mt-auto pt-4 border-t border-slate-800/80 space-y-2">
+        {onOpenChangelog && (
+          <button
+            onClick={onOpenChangelog}
+            className="w-full py-2 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-mono font-bold transition-all flex items-center justify-between group"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-cyan-400 group-hover:rotate-12 transition-transform" />
+              <span>Changelog & Notes</span>
+            </div>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/30">v4.5</span>
+          </button>
+        )}
+
         <button
           onClick={onLaunchCloak}
           className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-950/40 to-slate-900/60 hover:from-rose-900/50 hover:to-rose-950/60 text-rose-400 border border-rose-900/50 hover:border-rose-500/50 text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm"

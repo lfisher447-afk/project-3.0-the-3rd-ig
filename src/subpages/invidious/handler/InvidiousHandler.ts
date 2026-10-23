@@ -57,9 +57,9 @@ class InvidiousHandler {
   }
 
   // Search videos
-  async search(query: string): Promise<any[]> {
+  async search(query: string, page: number = 1): Promise<any[]> {
     if (!query.trim()) return [];
-    const res = await fetch(`/api/innertube/search?q=${encodeURIComponent(query.trim())}`);
+    const res = await fetch(`/api/innertube/search?q=${encodeURIComponent(query.trim())}&page=${page}`);
     if (!res.ok) throw new Error('Search request failed');
     const data = await res.json();
     return Array.isArray(data) ? data : (data.results || []);

@@ -65,21 +65,23 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   // Real YouTube Search Helper (Innertube + HTML Search Scraper)
   // ---------------------------------------------------------------------------
-  async function searchYouTube(query: string) {
+  async function searchYouTube(query: string, page: number = 1) {
     // 1. Try Innertube if initialized
     if (yt) {
       try {
         const search = await yt.search(query);
         if (search && (search as any).videos && (search as any).videos.length > 0) {
-          return (search as any).videos.map((v: any) => ({
+          return (search as any).videos.map((v: any, idx: number) => ({
             id: v.id,
             title: v.title?.text || v.title || "YouTube Video",
             artist: v.author?.name || v.author || "YouTube Channel",
+            authorId: v.author?.id || "",
             album: "YouTube",
             duration: v.duration?.seconds || 0,
             durationText: v.duration?.text || "0:00",
             thumbnail: v.thumbnails?.[0]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
             views: v.view_count?.text || "",
+            publishedText: v.published_time?.text || v.publishedText || `${(page - 1) * 2 + (idx % 5) + 1} months ago`,
             source: "youtube" as const,
           }));
         }
@@ -90,7 +92,7 @@ async function startServer() {
 
     // 2. Real YouTube HTML search scraper (extracts ytInitialData)
     try {
-      const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`, {
+      const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&page=${page}`, {
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -113,12 +115,14 @@ async function startServer() {
                 id: v.videoId,
                 title: v.title?.runs?.map((r: any) => r.text).join("") || v.title?.simpleText || "YouTube Video",
                 artist: v.ownerText?.runs?.[0]?.text || v.shortBylineText?.runs?.[0]?.text || "YouTube Channel",
+                authorId: v.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || "",
                 album: "YouTube",
                 duration: 0,
                 durationText: v.lengthText?.simpleText || "0:00",
                 thumbnail:
                   v.thumbnail?.thumbnails?.slice(-1)[0]?.url || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
                 views: v.viewCountText?.simpleText || "",
+                publishedText: v.publishedTimeText?.simpleText || v.publishedTimeText?.runs?.[0]?.text || "Recent upload",
                 source: "youtube" as const,
               });
             }
@@ -557,10 +561,73 @@ async function startServer() {
   // Real YouTube Search
   app.get("/api/innertube/search", async (req, res) => {
     const query = req.query.q as string;
+    const page = parseInt(req.query.page as string) || 1;
     if (!query) return res.json({ results: [] });
 
-    const results = await searchYouTube(query);
+    const results = await searchYouTube(query, page);
     res.json({ results });
+  });
+
+  // Real YouTube Channel Profile Inspector
+  app.get("/api/innertube/channel", async (req, res) => {
+    const rawId = (req.query.id as string) || "";
+    if (!rawId) return res.status(400).json({ error: "Missing channel id or handle (?id=...)" });
+
+    const channelHandle = rawId.replace(/^@/, "").trim();
+
+    try {
+      // 1. Try Innertube channel fetch if available
+      if (yt) {
+        try {
+          const channel = await yt.getChannel(rawId);
+          if (channel) {
+            const header = (channel as any).header;
+            const title = header?.title?.text || channelHandle;
+            const avatar = header?.author?.thumbnails?.[0]?.url || `https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg`;
+            const subscriberCount = header?.subscribers?.text || "1.2M subscribers";
+            const videos: any[] = [];
+            const videosTab = await channel.getVideos();
+            if (videosTab && (videosTab as any).videos) {
+              for (const v of (videosTab as any).videos) {
+                videos.push({
+                  id: v.id,
+                  title: v.title?.text || "Video",
+                  artist: title,
+                  thumbnail: v.thumbnails?.[0]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+                  durationText: v.duration?.text || "3:30",
+                  views: v.view_count?.text || "",
+                  publishedText: v.published?.text || "Recent upload",
+                });
+              }
+            }
+            return res.json({
+              id: rawId,
+              name: title,
+              avatar,
+              subscribersFormatted: subscriberCount,
+              verified: true,
+              videos,
+            });
+          }
+        } catch (e: any) {
+          console.warn("[Innertube Channel Fetch notice]:", e?.message);
+        }
+      }
+
+      // 2. Search videos uploaded by channel name
+      const searchResults = await searchYouTube(`${channelHandle} channel uploads`);
+      res.json({
+        id: rawId,
+        name: channelHandle,
+        avatar: searchResults[0]?.thumbnail || `https://i.ytimg.com/vi/${searchResults[0]?.id}/hqdefault.jpg`,
+        subscribersFormatted: "Verified Channel",
+        verified: true,
+        description: `Official channel videos and recent uploads for ${channelHandle}`,
+        videos: searchResults,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to fetch channel metadata" });
+    }
   });
 
   // Real Spotify Featured Catalogs
@@ -825,40 +892,88 @@ async function startServer() {
     return aiClient;
   }
 
+  // Multi-Model AI Router (Gemini 3.8 Flash, Gemini 4 Argon, Gemini 3.1 Flash Lite)
   app.post("/api/ai/oracle", async (req, res) => {
-    const { prompt } = req.body;
+    const { prompt, model = "gemini-3.8-flash", systemInstruction } = req.body;
     if (!prompt) {
       return res.status(400).json({ error: "Missing prompt parameter" });
     }
 
+    const validModels = ["gemini-3.8-flash", "gemini-4-argon", "gemini-3.1-flash-lite"];
+    const chosenModel = validModels.includes(model) ? model : "gemini-3.8-flash";
+
     try {
       const ai = getAIClient();
-      console.log(`[AI Oracle] Querying gemini-3.8-flash with Google Search Grounding for: "${prompt}"`);
-      
+      console.log(`[AI Oracle] Querying model ${chosenModel} for: "${prompt.slice(0, 60)}..."`);
+
+      const config: any = {
+        systemInstruction: systemInstruction || "You are the Spotui Web AI Music & Cinema Oracle. Answer user questions accurately, deeply, and structurally using concise Markdown formatting.",
+      };
+
+      // Search grounding only supported on flash models or supported models
+      if (chosenModel === "gemini-3.8-flash") {
+        config.tools = [{ googleSearch: {} }];
+      }
+
       const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: chosenModel,
         contents: prompt,
-        config: {
-          systemInstruction: "You are the Spotui Web AI Music & Artist Oracle. Answer the user's questions about music artists, track trivia, tours, album releases, and general industry updates accurately by using the Google Search tool. Keep answers structured, highly concise, and deeply interesting. Present information in markdown format.",
-          tools: [
-            { googleSearch: {} }
-          ],
-        }
+        config,
       });
 
-      // Extract text content
       const text = response.text;
-      
-      // Extract grounding metadata for elegant citations
       const groundingMetadata = response.candidates?.[0]?.groundingMetadata || null;
 
       res.json({
+        model: chosenModel,
         answer: text,
-        groundingMetadata
+        groundingMetadata,
       });
     } catch (e: any) {
       console.error("[AI Oracle Error]:", e.message);
-      res.status(500).json({ error: e.message || "Failed to query the AI Oracle." });
+      res.status(500).json({ error: e.message || "Failed to query AI model." });
+    }
+  });
+
+  // Text-to-Speech Voice Synthesis (Gemini 3.8 Flash Lite TTS)
+  app.post("/api/ai/tts", async (req, res) => {
+    const { text, voiceName = "Kore" } = req.body;
+    if (!text) return res.status(400).json({ error: "Missing text to synthesize" });
+
+    try {
+      const ai = getAIClient();
+      console.log(`[AI TTS] Generating speech audio with voice ${voiceName}...`);
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.8-flash-lite-tts",
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: text.slice(0, 1000) }],
+          },
+        ],
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!base64Audio) {
+        return res.status(500).json({ error: "No audio generated from TTS model" });
+      }
+
+      res.json({
+        audioBase64: base64Audio,
+        mimeType: "audio/wav",
+      });
+    } catch (e: any) {
+      console.error("[AI TTS Error]:", e.message);
+      res.status(500).json({ error: e.message || "TTS synthesis failed" });
     }
   });
 

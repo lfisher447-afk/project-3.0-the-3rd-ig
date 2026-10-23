@@ -133,6 +133,13 @@ export interface AppSettings {
     particlesEnabled: boolean;
     compactView: boolean;
   };
+
+  // Movies & TMDB Integration
+  movies?: {
+    tmdbApiKey?: string;
+    preferredServer?: string;
+    autoPlayTrailer?: boolean;
+  };
 }
 
 export interface ShazamMatch {

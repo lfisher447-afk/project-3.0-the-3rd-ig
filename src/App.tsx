@@ -22,6 +22,7 @@ import {
   Tv,
   Server,
   Zap,
+  Volume2,
 } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { PlayerBar } from './components/PlayerBar';
@@ -31,9 +32,11 @@ import { NovaAcModal } from './components/NovaAcModal';
 import { ShazamModal } from './components/ShazamModal';
 import { AudioDspModal } from './components/AudioDspModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
+import { ChangelogModal } from './components/ChangelogModal';
 import { SettingsView } from './components/SettingsView';
 import { SpotifyMain } from './subpages/spotify/SpotifyMain';
 import { InvidiousMain } from './subpages/invidious/InvidiousMain';
+import { MoviesMain } from './subpages/movies/MoviesMain';
 import { YtMusicMain } from './subpages/ytmusic/YtMusicMain';
 import { ytMusicHandler } from './subpages/ytmusic/handler/YtMusicHandler';
 import { ProxiesMain } from './subpages/proxies/ProxiesMain';
@@ -201,10 +204,10 @@ const defaultSettings: AppSettings = {
 };
 
 export default function App() {
-  // Read initial tab from URL hash if present (e.g. #/yt-player -> yt-player)
+  // Read initial tab from URL hash if present (e.g. #/movies -> movies)
   const getInitialTab = () => {
     const hash = window.location.hash.replace(/^#\/?/, '');
-    const validTabs = ['home', 'yt-music', 'yt-player', 'spotify', 'servers', 'web-proxy', 'library', 'search', 'settings'];
+    const validTabs = ['home', 'movies', 'yt-music', 'yt-player', 'spotify', 'servers', 'web-proxy', 'library', 'search', 'settings'];
     return validTabs.includes(hash) ? hash : 'home';
   };
 
@@ -226,14 +229,18 @@ export default function App() {
   // AI Oracle State
   const [searchSubMode, setSearchSubMode] = useState<'stealth' | 'oracle'>('stealth');
   const [oraclePrompt, setOraclePrompt] = useState('');
-  const [oracleResponse, setOracleResponse] = useState<{ answer: string; groundingMetadata: any } | null>(null);
+  const [selectedAiModel, setSelectedAiModel] = useState<'gemini-3.8-flash' | 'gemini-4-argon' | 'gemini-3.1-flash-lite'>('gemini-3.8-flash');
+  const [oracleResponse, setOracleResponse] = useState<{ answer: string; groundingMetadata: any; model?: string } | null>(null);
   const [oracleLoading, setOracleLoading] = useState(false);
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const [ttsLoading, setTtsLoading] = useState(false);
 
   // Modals
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [showNovaModal, setShowNovaModal] = useState(false);
   const [showShazamModal, setShowShazamModal] = useState(false);
   const [showDspModal, setShowDspModal] = useState(false);
+  const [showChangelogModal, setShowChangelogModal] = useState(false);
   const handleOpenDsp = useCallback(() => {
     try {
       const overlay = document.getElementById('anti-screenshot-overlay');
@@ -306,7 +313,7 @@ export default function App() {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.replace(/^#\/?/, '');
-      const validTabs = ['home', 'yt-music', 'yt-player', 'spotify', 'servers', 'web-proxy', 'library', 'search', 'settings'];
+      const validTabs = ['home', 'movies', 'yt-music', 'yt-player', 'spotify', 'servers', 'web-proxy', 'library', 'search', 'settings'];
       if (validTabs.includes(hash)) {
         setActiveTab(hash);
       }
@@ -663,19 +670,20 @@ export default function App() {
     }
   };
 
-  // Google Search Grounded Music Oracle query
+  // Google Search Grounded Music & Cinema Oracle query
   const handleOracleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!oraclePrompt.trim()) return;
     setOracleLoading(true);
     setOracleResponse(null);
+    setTtsAudioUrl(null);
     try {
       const res = await fetch('/api/ai/oracle', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ prompt: oraclePrompt }),
+        body: JSON.stringify({ prompt: oraclePrompt, model: selectedAiModel }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -688,6 +696,32 @@ export default function App() {
       alert('Network issue: ' + err.message);
     } finally {
       setOracleLoading(false);
+    }
+  };
+
+  // Text-to-Speech Synthesis Handler using Gemini 3.8 Flash Lite TTS
+  const handleSynthesizeSpeech = async (text: string) => {
+    if (!text) return;
+    setTtsLoading(true);
+    try {
+      const res = await fetch('/api/ai/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voiceName: 'Kore' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.audioBase64) {
+          const audioUrl = `data:audio/wav;base64,${data.audioBase64}`;
+          setTtsAudioUrl(audioUrl);
+          const audio = new Audio(audioUrl);
+          audio.play().catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setTtsLoading(false);
     }
   };
 
@@ -794,6 +828,7 @@ export default function App() {
         onOpenNovaAc={() => setShowNovaModal(true)}
         onOpenShazam={() => setShowShazamModal(true)}
         onOpenDsp={handleOpenDsp}
+        onOpenChangelog={() => setShowChangelogModal(true)}
         onLaunchCloak={() =>
           launchDedicatedAboutBlank(
             window.location.href,
@@ -1302,6 +1337,26 @@ export default function App() {
                 </div>
               ) : (
                 <div className="space-y-6">
+                  {/* AI Model Selector & Settings Ribbon */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-[#091a1e] border border-[#163a43]">
+                    <div className="flex items-center gap-2">
+                      <Sparkles size={16} className="text-[#48e4ff]" />
+                      <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">AI Model Engine:</span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={selectedAiModel}
+                        onChange={(e) => setSelectedAiModel(e.target.value as any)}
+                        className="bg-[#051316] border border-[#183a43] text-[#48e4ff] text-xs font-mono font-bold rounded-xl px-3 py-1.5 outline-none cursor-pointer"
+                      >
+                        <option value="gemini-3.8-flash">Gemini 3.8 Flash (Grounded Live Search)</option>
+                        <option value="gemini-4-argon">Gemini 4 Argon (Complex STEM & Reasoning)</option>
+                        <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (High Speed)</option>
+                      </select>
+                    </div>
+                  </div>
+
                   {/* AI Oracle Query Field */}
                   <form onSubmit={handleOracleSubmit} className="flex items-center gap-3">
                     <div className="relative flex-1">
@@ -1310,14 +1365,14 @@ export default function App() {
                         type="text"
                         value={oraclePrompt}
                         onChange={(e) => setOraclePrompt(e.target.value)}
-                        placeholder="Ask the Oracle (e.g., When is Billie Eilish touring next? What's the latest Daft Punk news?)..."
+                        placeholder="Ask the AI Oracle (e.g., Explain music theory, summarize Billie Eilish's tour, review Daft Punk)..."
                         className="w-full bg-[#071317] border border-[#1a3840] text-white rounded-2xl pl-12 pr-4 py-3.5 outline-none focus:border-[#48e4ff] text-sm transition-colors shadow-inner"
                       />
                     </div>
                     <button
                       type="submit"
                       disabled={oracleLoading || !oraclePrompt.trim()}
-                      className="px-6 py-3.5 bg-[#48e4ff] text-[#051a20] font-bold rounded-2xl text-xs hover:bg-[#8df5be] transition-colors disabled:opacity-50 flex items-center gap-2 shadow-lg cursor-pointer"
+                      className="px-6 py-3.5 bg-[#48e4ff] text-[#051a20] font-bold rounded-2xl text-xs hover:bg-[#8df5be] transition-colors disabled:opacity-50 flex items-center gap-2 shadow-lg cursor-pointer shrink-0"
                     >
                       {oracleLoading ? <Loader2 size={16} className="animate-spin" /> : 'Query Oracle'}
                     </button>
@@ -1327,16 +1382,29 @@ export default function App() {
                   {oracleLoading && (
                     <div className="bg-[#071317] border border-[#1a3840] rounded-2xl p-8 text-center text-cyan-400 space-y-3">
                       <Loader2 className="w-8 h-8 animate-spin mx-auto text-cyan-400" />
-                      <div className="text-xs font-mono font-bold tracking-wider">Accessing Live Google Search Grounding Index...</div>
+                      <div className="text-xs font-mono font-bold tracking-wider">Accessing {selectedAiModel} Engine...</div>
                     </div>
                   )}
 
                   {oracleResponse && (
                     <div className="bg-[#071317] border border-[#1a3840] rounded-2xl p-6 space-y-4 animate-in fade-in duration-300">
-                      <div className="flex items-center gap-2 text-xs text-[#48e4ff] font-mono">
-                        <Sparkles className="w-4 h-4 text-[#48e4ff] animate-pulse" />
-                        <span>Grounded AI Oracle Response</span>
+                      <div className="flex items-center justify-between border-b border-[#12282e] pb-3">
+                        <div className="flex items-center gap-2 text-xs text-[#48e4ff] font-mono font-bold">
+                          <Sparkles className="w-4 h-4 text-[#48e4ff] animate-pulse" />
+                          <span>AI Model Output ({oracleResponse.model || selectedAiModel})</span>
+                        </div>
+
+                        {/* TTS Voice Speech Button */}
+                        <button
+                          onClick={() => handleSynthesizeSpeech(oracleResponse.answer)}
+                          disabled={ttsLoading}
+                          className="px-3 py-1.5 rounded-xl bg-[#0e2a32] hover:bg-[#163e49] text-[#48e4ff] border border-[#1b4855] text-xs font-mono font-bold transition flex items-center gap-1.5 shadow-md"
+                        >
+                          {ttsLoading ? <Loader2 size={13} className="animate-spin" /> : <Volume2 size={13} />}
+                          <span>Listen (Gemini TTS)</span>
+                        </button>
                       </div>
+
                       <div className="text-zinc-200 text-sm leading-relaxed whitespace-pre-wrap font-sans">
                         {oracleResponse.answer}
                       </div>
@@ -1381,6 +1449,13 @@ export default function App() {
                 onPlayAudioOnly={handlePlayTrack}
                 onOpenDsp={handleOpenDsp}
               />
+            </div>
+          )}
+
+          {/* SUB-PAGE: MOVIES & CINEMA HUB */}
+          {activeTab === 'movies' && (
+            <div className="h-full animate-in fade-in duration-300">
+              <MoviesMain settings={settings} />
             </div>
           )}
 
@@ -1512,6 +1587,11 @@ export default function App() {
         onClose={() => setShowSetupWizard(false)}
         settings={settings}
         onUpdateSettings={setSettings}
+      />
+
+      <ChangelogModal
+        isOpen={showChangelogModal}
+        onClose={() => setShowChangelogModal(false)}
       />
     </div>
   );

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Tv, Search, Flame, Play, RefreshCw, Sparkles, Sliders, ExternalLink } from 'lucide-react';
+import { Tv, Search, Flame, Play, RefreshCw, Sparkles, Sliders, ExternalLink, User } from 'lucide-react';
 import { InvidiousPlayer } from './player/InvidiousPlayer';
 import { InvidiousSearch } from './search/InvidiousSearch';
+import { InvidiousChannel } from './channel/InvidiousChannel';
 import { invidiousHandler, VideoMetadata } from './handler/InvidiousHandler';
 import { Track } from '../../types';
 
@@ -14,12 +15,13 @@ export const InvidiousMain: React.FC<InvidiousMainProps> = ({
   onPlayAudioOnly,
   onOpenDsp,
 }) => {
-  const [activeTab, setActiveTab] = useState<'trending' | 'search' | 'player'>('trending');
+  const [activeTab, setActiveTab] = useState<'trending' | 'search' | 'player' | 'channel'>('trending');
   const [urlInput, setUrlInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [activeVideoMetadata, setActiveVideoMetadata] = useState<VideoMetadata | null>(null);
+  const [selectedChannelName, setSelectedChannelName] = useState<string | null>(null);
   const [trendingVideos, setTrendingVideos] = useState<any[]>([]);
 
   useEffect(() => {
@@ -42,6 +44,12 @@ export const InvidiousMain: React.FC<InvidiousMainProps> = ({
     }
   };
 
+  const handleSelectChannel = (channelName: string) => {
+    if (!channelName) return;
+    setSelectedChannelName(channelName);
+    setActiveTab('channel');
+  };
+
   return (
     <div className="space-y-8 select-none pb-24 animate-in fade-in duration-300">
       {/* Page Header */}
@@ -59,7 +67,7 @@ export const InvidiousMain: React.FC<InvidiousMainProps> = ({
             YouTube Video & Live Player
           </h1>
           <p className="text-xs text-[#789d9a] mt-1 max-w-xl">
-            Stream high-fidelity 1080p video, decipher audio streams directly, view comments, and route real-time audio through the 5-band Web Audio DSP.
+            Stream high-fidelity 1080p video, decipher audio streams directly, view channel uploads, and route real-time audio through the 5-band Web Audio DSP.
           </p>
         </div>
 
@@ -87,6 +95,21 @@ export const InvidiousMain: React.FC<InvidiousMainProps> = ({
             <Search size={14} />
             <span>Search</span>
           </button>
+
+          {selectedChannelName && (
+            <button
+              onClick={() => setActiveTab('channel')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                activeTab === 'channel'
+                  ? 'bg-[#f43f5e] text-white shadow-md'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <User size={14} />
+              <span>Channel: {selectedChannelName.slice(0, 12)}...</span>
+            </button>
+          )}
+
           {activeVideoMetadata && (
             <button
               onClick={() => setActiveTab('player')}
@@ -187,7 +210,16 @@ export const InvidiousMain: React.FC<InvidiousMainProps> = ({
                   <h3 className="font-bold text-sm text-white line-clamp-2 group-hover:text-[#f43f5e] transition-colors leading-snug">
                     {video.title}
                   </h3>
-                  <div className="text-xs text-[#789d9a] mt-1 truncate">{video.artist}</div>
+
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectChannel(video.artist);
+                    }}
+                    className="text-xs text-[#789d9a] hover:text-[#48e4ff] transition-colors mt-1 truncate cursor-pointer font-medium"
+                  >
+                    {video.artist}
+                  </div>
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-[#122c33] flex items-center justify-between text-[11px] font-mono text-zinc-500">
@@ -207,6 +239,16 @@ export const InvidiousMain: React.FC<InvidiousMainProps> = ({
         <InvidiousSearch
           onSelectVideo={handleLoadVideo}
           onPlayAudioOnly={onPlayAudioOnly}
+          onSelectChannel={handleSelectChannel}
+        />
+      )}
+
+      {/* Tab 4: Channel View */}
+      {activeTab === 'channel' && selectedChannelName && (
+        <InvidiousChannel
+          channelIdOrName={selectedChannelName}
+          onBack={() => setActiveTab('search')}
+          onSelectVideo={handleLoadVideo}
         />
       )}
     </div>

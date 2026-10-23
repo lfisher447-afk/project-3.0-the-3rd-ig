@@ -199,10 +199,10 @@ export const WebProxyBrowser: React.FC = () => {
           <Plus size={14} />
         </button>
 
-        {/* Engine Switcher & Live Latency Indicator */}
+        {/* Engine & User-Agent Switcher */}
         <div className="ml-auto mb-1 flex items-center gap-2">
           <span className="text-[10px] font-mono text-[#527e88] uppercase hidden md:inline">
-            Vercel & WSM Routing:
+            Proxy Routing:
           </span>
           <select
             value={activeTab.engine}

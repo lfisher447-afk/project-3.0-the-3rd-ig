@@ -33,6 +33,7 @@ import {
   Terminal,
   Gauge,
   VolumeX,
+  Film,
 } from 'lucide-react';
 import { AppSettings, EQBandCount, SpatialMode, ThemePalette, VisualizerStyle } from '../types';
 import { exportFullVault, getStorageMetrics } from '../lib/db';
@@ -189,6 +190,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const sections = [
     { id: 'security', icon: Shield, label: 'Security & DRM Shield' },
+    { id: 'movies', icon: Film, label: 'Movies & TMDB' },
     { id: 'cloak', icon: Eye, label: 'AB Spoof & Cloaking' },
     { id: 'permissions', icon: Bell, label: 'Notifications & Permissions' },
     { id: 'vercel', icon: Globe, label: 'Vercel & WSM Proxy' },
@@ -261,6 +263,46 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           );
         })}
       </div>
+
+      {/* Section: Movies & TMDB */}
+      {activeSection === 'movies' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="p-6 rounded-2xl bg-[#061013] border border-[#1a3840] space-y-4">
+            <div className="flex items-center justify-between border-b border-[#13323a] pb-3">
+              <div className="flex items-center gap-2">
+                <Film size={18} className="text-rose-400" />
+                <h3 className="text-lg font-serif font-bold text-white">TMDB API Key & Cinema Settings</h3>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                15+ STREAM SERVERS
+              </span>
+            </div>
+
+            <p className="text-xs text-[#789d9a] leading-relaxed">
+              Configure your custom TMDB (The Movie Database) API key for high-speed movie metadata, 4K artwork, TV show season guides, and trailer streams.
+            </p>
+
+            <div className="space-y-2">
+              <label className="text-xs font-mono font-bold text-[#48e4ff] block">Custom TMDB API Key (v3 auth):</label>
+              <input
+                type="text"
+                value={settings.movies?.tmdbApiKey || ''}
+                onChange={(e) =>
+                  onUpdateSettings((prev) => ({
+                    ...prev,
+                    movies: { ...prev.movies, tmdbApiKey: e.target.value },
+                  }))
+                }
+                placeholder="Paste TMDB API Key (e.g., 15d2166f754b7132e022f6e520a32049)..."
+                className="w-full bg-[#051316] border border-[#183a43] rounded-xl px-4 py-3 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500 font-mono transition"
+              />
+              <span className="text-[11px] text-zinc-500 font-mono block">
+                If left blank, Spotui automatically routes through built-in TMDB API proxy endpoints.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Section 1: Security & DRM Shield */}
       {activeSection === 'security' && (
