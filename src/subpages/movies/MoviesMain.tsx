@@ -62,6 +62,7 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
   const [selectedEpisode, setSelectedEpisode] = useState<number>(1);
   const [trailerUrl, setTrailerUrl] = useState<string | null>(null);
   const [isTheater, setIsTheater] = useState(false);
+  const [useNativeStreamLoader, setUseNativeStreamLoader] = useState(false);
 
   // TMDB Key fallback
   const tmdbKey = settings?.movies?.tmdbApiKey || '15d2166f754b7132e022f6e520a32049';
@@ -225,17 +226,43 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
             </button>
           </div>
 
-          {/* Server Selector Ribbon */}
+          {/* Server Selector & Loader Mode Ribbon */}
           <div className="p-4 rounded-3xl bg-[#081b20] border border-[#163c46] shadow-xl space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#13353e] pb-3">
               <div className="flex items-center gap-2">
                 <Server size={15} className="text-rose-400" />
                 <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
-                  Active Cinema Mirror:
+                  Active Cinema Engine:
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#113139] border border-[#1c4955] text-[#48e4ff] font-mono font-bold">
-                  {currentServerObj.flag} {currentServerObj.name}
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-[#113139] border border-[#1c4955] text-[#48e4ff] font-mono font-bold">
+                  {useNativeStreamLoader ? '⚡ Server-Side Native Stream Proxy' : `${currentServerObj.flag} ${currentServerObj.name}`}
                 </span>
+              </div>
+
+              {/* Loader Mode Switcher */}
+              <div className="flex items-center gap-1 bg-[#051316] p-1 rounded-2xl border border-[#183a43]">
+                <button
+                  onClick={() => setUseNativeStreamLoader(false)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 ${
+                    !useNativeStreamLoader
+                      ? 'bg-rose-600 text-white shadow-md'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  <Shield size={13} />
+                  <span>Embed Server (15 Mirror Nodes)</span>
+                </button>
+                <button
+                  onClick={() => setUseNativeStreamLoader(true)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 ${
+                    useNativeStreamLoader
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  <Sparkles size={13} />
+                  <span>Native Direct Stream Loader</span>
+                </button>
               </div>
 
               {isTv && (
@@ -268,36 +295,54 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
               )}
             </div>
 
-            {/* Server Grid Selector */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              {MOVIE_SERVERS.map((srv) => {
-                const isActive = selectedServer === srv.id;
-                return (
-                  <button
-                    key={srv.id}
-                    onClick={() => setSelectedServer(srv.id)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 ${
-                      isActive
-                        ? 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]'
-                        : 'bg-[#061518] hover:bg-[#0d2930] border border-[#13343c] text-zinc-300'
-                    }`}
-                  >
-                    <span>{srv.flag}</span>
-                    <span>{srv.name}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {/* Server Grid Selector (When in Embed mode) */}
+            {!useNativeStreamLoader && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                {MOVIE_SERVERS.map((srv) => {
+                  const isActive = selectedServer === srv.id;
+                  return (
+                    <button
+                      key={srv.id}
+                      onClick={() => setSelectedServer(srv.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 ${
+                        isActive
+                          ? 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]'
+                          : 'bg-[#061518] hover:bg-[#0d2930] border border-[#13343c] text-zinc-300'
+                      }`}
+                    >
+                      <span>{srv.flag}</span>
+                      <span>{srv.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Protected Cinema Player Frame */}
           <div className="relative w-full aspect-video bg-black rounded-3xl border border-[#163a43] overflow-hidden shadow-2xl">
-            <iframe
-              src={activeStreamUrl}
-              title={selectedItem.title || selectedItem.name}
-              allowFullScreen
-              className="w-full h-full border-0"
-            />
+            {useNativeStreamLoader ? (
+              <div className="w-full h-full relative flex items-center justify-center bg-zinc-950">
+                <video
+                  key={`${selectedItem.id}-${selectedSeason}-${selectedEpisode}`}
+                  src={`/api/video/stream?id=tmdb_${selectedItem.id}&res=1080p`}
+                  controls
+                  autoPlay
+                  controlsList="nodownload"
+                  className="w-full h-full object-contain"
+                  onError={(e) => {
+                    console.warn('Native stream error fallback:', e);
+                  }}
+                />
+              </div>
+            ) : (
+              <iframe
+                src={activeStreamUrl}
+                title={selectedItem.title || selectedItem.name}
+                allowFullScreen
+                className="w-full h-full border-0"
+              />
+            )}
           </div>
 
           {/* Movie Overview Details */}
