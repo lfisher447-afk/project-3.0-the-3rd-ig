@@ -1379,6 +1379,26 @@ async function startServer() {
 
     let videoId = rawId.replace(/^(yt_|sp_bridge_)/, "").trim();
 
+    // Resolve TMDB Movie/Series ID if needed
+    if (videoId.startsWith("tmdb_")) {
+      const tmdbId = videoId.replace("tmdb_", "");
+      try {
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=15d2166f754b7132e022f6e520a32049`);
+        if (tmdbRes.ok) {
+          const tmdbData = await tmdbRes.json();
+          const movieTitle = tmdbData.title || tmdbData.original_title || "";
+          if (movieTitle) {
+            const ytResults = await searchYouTube(`${movieTitle} official trailer`);
+            if (ytResults && ytResults.length > 0) {
+              videoId = ytResults[0].id;
+            }
+          }
+        }
+      } catch (tmdbErr) {
+        console.warn("[TMDB Stream Resolver Error]:", tmdbErr);
+      }
+    }
+
     // Resolve Spotify ID if needed
     if (/^[a-zA-Z0-9]{22}$/.test(videoId)) {
       try {

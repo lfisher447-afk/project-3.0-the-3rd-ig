@@ -217,7 +217,7 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
   });
 
   const [selectedResolution, setSelectedResolution] = useState<string>('720p');
-  const [activeTab, setActiveTab] = useState<'related' | 'comments' | 'description' | 'servers'>('related');
+  const [activeTab, setActiveTab] = useState<'related' | 'comments' | 'description' | 'servers' | 'chapters'>('related');
   const [comments, setComments] = useState<VideoComment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -225,6 +225,28 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
   const [isTheater, setIsTheater] = useState(false);
   const [streamError, setStreamError] = useState(false);
   const [showServerDetails, setShowServerDetails] = useState(false);
+
+  // Extract chapters from description timestamps
+  const chapters = React.useMemo(() => {
+    if (!metadata?.description) return [];
+    const lines = metadata.description.split('\n');
+    const result: Array<{ time: number; title: string; text: string }> = [];
+    const timePattern = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})/;
+    for (const line of lines) {
+      const match = line.match(timePattern);
+      if (match) {
+        const h = match[1] ? parseInt(match[1]) : 0;
+        const m = parseInt(match[2]);
+        const s = parseInt(match[3]);
+        const secs = h * 3600 + m * 60 + s;
+        const title = line.replace(match[0], '').replace(/^[\s\-–—:]+/, '').trim();
+        if (title) {
+          result.push({ time: secs, title, text: match[0] });
+        }
+      }
+    }
+    return result;
+  }, [metadata?.description]);
 
   // Native Video Player State (for HTML5 stream mode)
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -810,15 +832,16 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
             </div>
           </>
         ) : (
-          /* Decrypted Native Proxy Stream (Zero External Embeds - 100% Unblockable) */
+          /* Real Invidious & Web Player Embedded Node with Sandboxed Protection */
           <div className="w-full h-full relative flex items-center justify-center bg-black rounded-3xl overflow-hidden">
-            <video
-              key={`invidious-native-${playerMode}-${metadata.videoId}-${selectedResolution}`}
-              src={`/api/video/stream?id=${metadata.videoId}&res=${selectedResolution}`}
-              controls
-              autoPlay
-              className="w-full h-full object-contain"
-              poster={metadata.thumbnail}
+            <iframe
+              key={`invidious-embed-${playerMode}-${metadata.videoId}-${selectedResolution}`}
+              src={getEmbedSrc()}
+              title={metadata.title}
+              allowFullScreen
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-top-navigation-by-user-activation"
+              className="w-full h-full border-0"
             />
           </div>
         )}
@@ -927,7 +950,54 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
             <Server size={14} />
             <span>Servers ({INVIDIOUS_SERVERS.length})</span>
           </button>
+
+          {chapters.length > 0 && (
+            <button
+              onClick={() => setActiveTab('chapters')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                activeTab === 'chapters'
+                  ? 'bg-[#f43f5e] text-white shadow-md'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <Zap size={14} />
+              <span>Chapters ({chapters.length})</span>
+            </button>
+          )}
         </div>
+
+        {/* Tab 0: Chapters */}
+        {activeTab === 'chapters' && (
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
+            <div className="text-xs text-zinc-400 mb-3">
+              Click any chapter timestamp below to jump to that section:
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {chapters.map((ch, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    if (videoRef.current) {
+                      videoRef.current.currentTime = ch.time;
+                      setCurrentTime(ch.time);
+                    }
+                  }}
+                  className="p-3 rounded-xl bg-[#091b20] border border-[#163640] hover:border-[#f43f5e] cursor-pointer flex items-center justify-between transition group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="px-2 py-0.5 rounded bg-[#f43f5e]/20 text-[#f43f5e] font-mono text-[11px] font-bold">
+                      {ch.text}
+                    </span>
+                    <span className="text-xs text-white group-hover:text-[#f43f5e] transition font-medium">
+                      {ch.title}
+                    </span>
+                  </div>
+                  <Play size={12} className="text-zinc-500 group-hover:text-white transition" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Tab 1: Related Videos */}
         {activeTab === 'related' && (

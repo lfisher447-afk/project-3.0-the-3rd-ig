@@ -22,8 +22,10 @@ import {
   Heart,
   Share2,
   Database,
+  Film,
 } from 'lucide-react';
 import { Track, Playlist } from '../../types';
+import { VaultVideoPlayer } from './VaultVideoPlayer';
 import {
   saveTrack,
   saveTracksBatch,
@@ -71,6 +73,7 @@ export const VaultMain: React.FC<VaultMainProps> = ({
   const [sortAsc, setSortAsc] = useState(false);
 
   // Modals and state
+  const [showVideoPlayer, setShowVideoPlayer] = useState(false);
   const [showCreatePlaylistModal, setShowCreatePlaylistModal] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState<Track | null>(null);
@@ -407,6 +410,17 @@ export const VaultMain: React.FC<VaultMainProps> = ({
 
         {/* Global Vault Controls */}
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Dedicated Universal Video Player Button (10 Playback Support Engines) */}
+          <button
+            onClick={() => setShowVideoPlayer(true)}
+            className="px-4 py-2 bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-slate-950 hover:text-white border border-cyan-400/80 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-lg shadow-cyan-950/60 hover:scale-[1.02] active:scale-95"
+            title="Open Universal Video Player (10 Playback Support Engines: HLS.js, HTML5, DASH, MSE, Web Audio DSP, Canvas Shaders, etc.)"
+          >
+            <Film size={15} className="fill-current text-slate-950 hover:text-white" />
+            <span>Video Player</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-950/40 text-white font-mono">10 Libs</span>
+          </button>
+
           <button
             onClick={() => fileInputRef.current?.click()}
             className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer shadow-sm"
@@ -997,6 +1011,14 @@ export const VaultMain: React.FC<VaultMainProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Vault Universal Video Player Modal (10 Playback Engines) */}
+      {showVideoPlayer && (
+        <VaultVideoPlayer
+          onClose={() => setShowVideoPlayer(false)}
+          onOpenDsp={onOpenDsp}
+        />
       )}
     </div>
   );
