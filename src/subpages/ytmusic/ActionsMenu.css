@@ -1,0 +1,20 @@
+/* ActionsMenu Styles */
+#actionsMenu {
+  background-color: #18181b;
+  border-width: 1px;
+  border-color: #27272a;
+  border-radius: 1.5rem;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  width: 100%;
+  max-width: 24rem;
+}
+
+#actionsMenu::backdrop {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+#actionsMenu.is-music {
+  /* Add music specific styles if needed */
+}

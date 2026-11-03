@@ -1,5 +1,5 @@
 import React from "react";
-import { useConfig } from "@config";
+import { useConfig } from "../config";
 import {
   addToCollection,
   CACHED_COLLECTION,
@@ -7,12 +7,12 @@ import {
   getCollection,
   getCollectionsKeys,
   removeFromCollection,
-} from "@modules/library";
-import { t } from "@stores";
+} from "../modules/library";
+import { t } from "../store";
 
 export default function CollectionSelector(_: {
   close?: () => void;
-  data: TrackItem[];
+  data: any[];
 }) {
   const config = useConfig();
 
@@ -63,23 +63,23 @@ export default function CollectionSelector(_: {
   };
 
   const label = (key: string) =>
-    key === CACHED_COLLECTION ? t("hub_cached") : key;
+    key === CACHED_COLLECTION ? (t("hub_cached" as any) || "Cached") : key;
 
   const addKeys = getKeys(true);
   const removeKeys = getKeys(false);
 
   return (
     <select
-      className="ri-play-list-add-fill"
+      className="ri-play-list-add-fill bg-transparent border-none text-xl cursor-pointer focus:ring-0 appearance-none"
       id="collectionSelector"
       onChange={handleCollectionChange}
       defaultValue=""
-      aria-label={t("collection_selector_add_to")}
+      aria-label={t("collection_selector_add_to" as any) || "Add to Collection"}
     >
       <option value="" disabled>
         &#xf00e;
       </option>
-      <option value="+cl">{t("collection_selector_create_new")}</option>
+      <option value="+cl">{t("collection_selector_create_new" as any) || "Create New"}</option>
       {addKeys.length > 0 && (
         <optgroup label="Add to Collection">
           {addKeys.map((v) => (

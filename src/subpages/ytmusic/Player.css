@@ -1,0 +1,29 @@
+/* Player Styles */
+#playerSection.bg-frost .bg-image {
+  background-image: var(--player-bg);
+  background-size: cover;
+  background-position: var(--player-bp);
+}
+
+#playerSection.bg-blur .bg-image {
+  background-image: var(--player-bg);
+  background-size: cover;
+  background-position: var(--player-bp);
+}
+
+#playerSection.bg-frost-motion .bg-image {
+  background-image: var(--player-bg);
+  background-size: cover;
+  animation: bg-pan 20s linear infinite alternate;
+}
+
+#playerSection.bg-blur-motion .bg-image {
+  background-image: var(--player-bg);
+  background-size: cover;
+  animation: bg-pan 20s linear infinite alternate;
+}
+
+@keyframes bg-pan {
+  from { background-position: 0% 0%; }
+  to { background-position: 100% 100%; }
+}

@@ -18,6 +18,7 @@ import aiOracleHandler from "./_handlers/ai-oracle.js";
 import proxyHandler from "./_handlers/proxy.js";
 import proxyPingHandler from "./_handlers/proxy-ping.js";
 import wsTunnelHandler from "./_handlers/ws-tunnel.js";
+import ytmusicHandler from "./_handlers/ytmusic.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Global CORS & preflight
@@ -139,6 +140,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (pathname === "/api/ws-tunnel") {
     return wsTunnelHandler(req, res);
+  }
+
+  if (pathname.startsWith("/api/ytmusic") || pathname === "/search-suggestions") {
+    return ytmusicHandler(req, res);
   }
 
   return res.status(404).json({

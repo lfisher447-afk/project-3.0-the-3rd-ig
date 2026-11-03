@@ -3,15 +3,11 @@ import {
   clearSuggestions,
   getSearchResults,
   getSearchSuggestions,
-  playerStore,
   useSearchStore,
   setSearchStore,
   t,
-} from "@stores";
-import { idFromURL } from "@utils";
-import { useConfig, drawer } from "@config";
-import { player } from "@modules/playback";
-import { cn } from "@components/common";
+} from "../store";
+import { useConfig, drawer } from "../config";
 
 export default function Input() {
   const searchStore = useSearchStore();
@@ -33,42 +29,14 @@ export default function Input() {
   }
 
   return (
-    <>
+    <div className="relative w-full">
       <input
         value={searchStore.query}
-        placeholder={t("search_placeholder")}
+        placeholder={t("search_placeholder") || "Search for songs, artists..."}
         type="search"
         ref={superInput}
-        className="superInput"
+        className="w-full bg-zinc-900 border border-zinc-800 rounded-full py-2 px-6 text-sm text-white focus:outline-none focus:border-[#48e4ff] transition-colors"
         autoComplete="off"
-        onPaste={async (e) => {
-          const pastedText = e.clipboardData?.getData("text");
-          const id = idFromURL(pastedText || "");
-          const separators = ["\n", " ", ","];
-          const isBulk = separators.find((separator) =>
-            pastedText?.includes(separator),
-          );
-
-          if (!config.searchBarLinkCapture) return;
-
-          if (!id && isBulk) {
-            const array = pastedText
-              ?.split(isBulk)
-              .map(idFromURL)
-              .filter((s) => s?.length === 11);
-            if (superInput.current) superInput.current.value = "";
-            if (array?.length)
-              await import("@modules/bulkCapture").then((mod) =>
-                mod.default(array as string[]),
-              );
-            return;
-          }
-
-          if (id && id !== playerStore.stream.id) {
-            player(id);
-            return;
-          }
-        }}
         onBlur={() => {
           clearTimeout(blurTimeout.current);
           blurTimeout.current = setTimeout(clearSuggestions, 150);
@@ -76,11 +44,7 @@ export default function Input() {
         onFocus={() => {
           clearTimeout(blurTimeout.current);
           if (searchStore.query) return;
-          setSearchStore(
-            "suggestions",
-            "data",
-            [...drawer.recentSearches].reverse(),
-          );
+          setSearchStore("suggestions", "data", [...drawer.recentSearches].reverse());
         }}
         onChange={(e) => {
           const { value } = e.target;
@@ -88,11 +52,7 @@ export default function Input() {
 
           if (!value) {
             clearSuggestions();
-            setSearchStore(
-              "suggestions",
-              "data",
-              [...drawer.recentSearches].reverse(),
-            );
+            setSearchStore("suggestions", "data", [...drawer.recentSearches].reverse());
             return;
           }
 
@@ -108,37 +68,22 @@ export default function Input() {
           }
 
           if (e.key === "ArrowUp") {
-            setSearchStore(
-              "suggestions",
-              "index",
-              index === -1 ? data.length - 1 : index - 1,
-            );
+            setSearchStore("suggestions", "index", index === -1 ? data.length - 1 : index - 1);
           }
 
           if (e.key === "ArrowDown") {
-            setSearchStore(
-              "suggestions",
-              "index",
-              index === data.length ? -1 : index + 1,
-            );
+            setSearchStore("suggestions", "index", index === data.length ? -1 : index + 1);
           }
-
-          document
-            .querySelectorAll("li.hover")[0]
-            ?.scrollIntoView({ behavior: "smooth", block: "center" });
         }}
       />
       {config.searchSuggestions && searchStore.suggestions.data.length > 0 && (
-        <ul className="suggestions">
+        <ul className="absolute z-50 w-full mt-2 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden py-1">
           {searchStore.suggestions.data.map((item, index) => (
             <li
               key={index}
-              className={cn(index === searchStore.suggestions.index && "hover")}
+              className={`px-4 py-2 text-sm cursor-pointer hover:bg-white/5 ${index === searchStore.suggestions.index ? "bg-white/10 text-[#48e4ff]" : "text-zinc-300"}`}
               onMouseDown={(e) => {
                 e.preventDefault();
-                textToSearch(item);
-              }}
-              onClick={() => {
                 textToSearch(item);
               }}
             >
@@ -147,6 +92,6 @@ export default function Input() {
           ))}
         </ul>
       )}
-    </>
+    </div>
   );
 }

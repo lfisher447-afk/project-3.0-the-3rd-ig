@@ -8,7 +8,9 @@ export default async function handler(req: any, res: any) {
       (req.headers["x-forwarded-host"] as string) ||
       (req.headers.host as string) ||
       "localhost";
-    const url = `${protocol}://${host}${req.url || "/"}`;
+    let pathname = req.url || "/";
+    if (pathname === "/search-suggestions") pathname = "/api/ytmusic/search-suggestions";
+    const url = `${protocol}://${host}${pathname}`;
 
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {

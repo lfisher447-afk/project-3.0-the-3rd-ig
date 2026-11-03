@@ -38,7 +38,7 @@ export interface EQBand {
   type: BiquadFilterType;
 }
 
-export type SpatialMode = 'off' | 'studio' | 'wide' | 'immersive' | 'cinema' | 'hall' | 'club';
+export type SpatialMode = 'off' | 'studio' | 'wide' | 'immersive' | 'hyper_spatial' | 'cinema' | 'hall' | 'club';
 export type VisualizerStyle = 'bars' | 'wave' | 'particles' | 'cyber-vu';
 export type ThemePalette = 'cyan' | 'violet' | 'emerald' | 'amber' | 'crimson';
 

@@ -72,6 +72,9 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
   const [customPresets, setCustomPresets] = useState<EQPresetDef[]>([]);
   const [customPresetName, setCustomPresetName] = useState('');
   const [showSavePresetDialog, setShowSavePresetDialog] = useState(false);
+  const [soundstageX, setSoundstageX] = useState<number>(0);
+  const [soundstageY, setSoundstageY] = useState<number>(0);
+  const [soundstageZ, setSoundstageZ] = useState<number>(-1);
 
   useEffect(() => {
     if (isOpen) {
@@ -399,6 +402,8 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
     }
   };
 
+  const lastThrottledUpdateRef = useRef<number>(0);
+
   // Real-time canvas spectrum visualization loop
   useEffect(() => {
     if (!isOpen) return;
@@ -416,22 +421,26 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
         const width = canvas.width;
         const height = canvas.height;
 
-        // Track compressor gain reduction and peak frequency
-        const red = audioEngine.getCompressionReduction();
-        setGainReductionDb(Math.round(red * 10) / 10);
+        // Throttle React state updates to 4 FPS max to prevent UI freeze
+        const now = Date.now();
+        if (now - lastThrottledUpdateRef.current > 250) {
+          lastThrottledUpdateRef.current = now;
+          const red = audioEngine.getCompressionReduction();
+          setGainReductionDb(Math.round(red * 10) / 10);
 
-        let maxBinVal = 0;
-        let maxBinIdx = 0;
-        for (let i = 0; i < freqData.length; i++) {
-          if (freqData[i] > maxBinVal) {
-            maxBinVal = freqData[i];
-            maxBinIdx = i;
+          let maxBinVal = 0;
+          let maxBinIdx = 0;
+          for (let i = 0; i < freqData.length; i++) {
+            if (freqData[i] > maxBinVal) {
+              maxBinVal = freqData[i];
+              maxBinIdx = i;
+            }
           }
-        }
-        if (maxBinVal > 30) {
-          const nyquist = 24000;
-          const estHz = Math.round((maxBinIdx / freqData.length) * nyquist);
-          setPeakFrequencyHz(estHz);
+          if (maxBinVal > 30) {
+            const nyquist = 24000;
+            const estHz = Math.round((maxBinIdx / freqData.length) * nyquist);
+            setPeakFrequencyHz(estHz);
+          }
         }
 
         ctx.clearRect(0, 0, width, height);
@@ -1144,6 +1153,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     { id: 'studio', label: 'Studio Room', desc: 'Acoustically Treated' },
                     { id: 'wide', label: 'Ultra-Wide', desc: 'Expanded Pan Field' },
                     { id: 'immersive', label: 'Immersive 3D', desc: 'Binaural Surround' },
+                    { id: 'hyper_spatial', label: 'Hyper-Spatial', desc: 'Extreme Soundstage' },
                     { id: 'cinema', label: 'Cinema Hall', desc: 'Deep Spatial Scale' },
                     { id: 'hall', label: 'Symphony Hall', desc: 'Grand Reverb Tail' },
                     { id: 'club', label: 'Binaural Club', desc: 'Sub & Venues Pan' },
@@ -1226,6 +1236,110 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                     }}
                     className="w-full accent-[#34d399] cursor-pointer"
                   />
+                </div>
+
+                {/* 3D HRTF Soundstage Coordinates & Interactive Orbit Pad */}
+                <div className="pt-4 border-t border-[#133139] space-y-3">
+                  <div className="flex items-center justify-between text-xs text-white">
+                    <span className="font-bold flex items-center gap-1.5">
+                      <Compass size={14} className="text-[#48e4ff]" />
+                      <span>3D HRTF Spatial Soundstage Panner Coordinates:</span>
+                    </span>
+                    <span className="font-mono text-[#48e4ff] text-[11px]">
+                      X: {soundstageX > 0 ? `+${soundstageX.toFixed(1)}` : soundstageX.toFixed(1)} | Y: {soundstageY > 0 ? `+${soundstageY.toFixed(1)}` : soundstageY.toFixed(1)} | Z: {soundstageZ.toFixed(1)}
+                    </span>
+                  </div>
+
+                  {/* Quick Preset Buttons for 3D Soundstage */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[
+                      { name: 'Center Stage', x: 0, y: 0, z: -1 },
+                      { name: 'Wide Left-Right', x: -3, y: 0, z: -2 },
+                      { name: 'Behind Listener', x: 0, y: 0, z: 2 },
+                      { name: 'Elevated Hall', x: 0, y: 2.5, z: -4 },
+                      { name: 'Surround Orbit', x: 2.5, y: 1, z: -2 },
+                    ].map((p) => (
+                      <button
+                        key={p.name}
+                        onClick={() => {
+                          setSoundstageX(p.x);
+                          setSoundstageY(p.y);
+                          setSoundstageZ(p.z);
+                          audioEngine.set3DSpatialPosition(p.x, p.y, p.z);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition cursor-pointer ${
+                          soundstageX === p.x && soundstageY === p.y && soundstageZ === p.z
+                            ? 'bg-[#48e4ff] text-[#051a20]'
+                            : 'bg-[#0a1e24] text-zinc-300 hover:bg-[#12363f]'
+                        }`}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Interactive Soundstage Pad */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                    <div className="p-3 rounded-xl bg-[#030d0f] border border-[#143842] space-y-1.5">
+                      <div className="flex justify-between text-[11px] font-mono text-white">
+                        <span>Left/Right Pan (X):</span>
+                        <span className="text-[#48e4ff] font-bold">{soundstageX.toFixed(1)}m</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-5"
+                        max="5"
+                        step="0.2"
+                        value={soundstageX}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          setSoundstageX(val);
+                          audioEngine.set3DSpatialPosition(val, soundstageY, soundstageZ);
+                        }}
+                        className="w-full accent-[#48e4ff] cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-[#030d0f] border border-[#143842] space-y-1.5">
+                      <div className="flex justify-between text-[11px] font-mono text-white">
+                        <span>Elevation (Y):</span>
+                        <span className="text-[#34d399] font-bold">{soundstageY.toFixed(1)}m</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-3"
+                        max="5"
+                        step="0.2"
+                        value={soundstageY}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          setSoundstageY(val);
+                          audioEngine.set3DSpatialPosition(soundstageX, val, soundstageZ);
+                        }}
+                        className="w-full accent-[#34d399] cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-[#030d0f] border border-[#143842] space-y-1.5">
+                      <div className="flex justify-between text-[11px] font-mono text-white">
+                        <span>Depth Distance (Z):</span>
+                        <span className="text-purple-300 font-bold">{soundstageZ.toFixed(1)}m</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-10"
+                        max="3"
+                        step="0.2"
+                        value={soundstageZ}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          setSoundstageZ(val);
+                          audioEngine.set3DSpatialPosition(soundstageX, soundstageY, val);
+                        }}
+                        className="w-full accent-purple-400 cursor-pointer"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 {/* Acoustic Reverb & Spatial HRTF Audition */}

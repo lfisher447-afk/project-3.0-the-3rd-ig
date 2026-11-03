@@ -21,24 +21,63 @@ function generateImpulseResponse(
   const left = buffer.getChannelData(0);
   const right = buffer.getChannelData(1);
 
-  // Frequency-dependent damping: high frequencies decay faster than low frequencies
+  // Advanced Room Simulation Parameters
+  const isHyper = mode === 'hyper_spatial';
+  const diffusion = isHyper ? 0.85 : 0.6;
+  const highFreqDamping = isHyper ? 0.7 : 0.5;
+
   for (let i = 0; i < length; i++) {
     const t = i / length;
+    
+    // Exponential decay curve
     const envelope = Math.exp(-t * decayRate);
-
-    // Initial early reflections (first 40ms)
-    let earlyReflection = 0;
-    if (i < sampleRate * 0.04) {
-      if (i % Math.floor(sampleRate * 0.007) === 0) earlyReflection = 0.4;
-      if (i % Math.floor(sampleRate * 0.013) === 0) earlyReflection = -0.3;
-      if (i % Math.floor(sampleRate * 0.021) === 0) earlyReflection = 0.25;
+    
+    // Frequency-dependent damping (lows last longer)
+    const damping = 1.0 - (t * highFreqDamping);
+    
+    // Early Reflections (Discrete echoes in first 80ms)
+    let earlyReflectionsL = 0;
+    let earlyReflectionsR = 0;
+    
+    if (i < sampleRate * 0.08) {
+      const erTimes = [0.011, 0.023, 0.037, 0.047, 0.061, 0.073];
+      const erGains = [0.6, -0.45, 0.3, 0.25, -0.15, 0.1];
+      
+      erTimes.forEach((time, idx) => {
+        const sampleIdx = Math.floor(time * sampleRate);
+        if (i === sampleIdx) {
+          earlyReflectionsL += erGains[idx];
+          earlyReflectionsR += erGains[idx] * (idx % 2 === 0 ? 0.7 : -0.7);
+        }
+      });
     }
 
-    const noiseL = (Math.random() * 2 - 1) * 0.8 + earlyReflection;
-    const noiseR = (Math.random() * 2 - 1) * 0.8 + (earlyReflection * -0.8);
+    // Late Reverb Tail (Diffuse white noise)
+    const noiseL = (Math.random() * 2 - 1) * diffusion;
+    const noiseR = (Math.random() * 2 - 1) * diffusion;
 
-    left[i] = noiseL * envelope;
-    right[i] = noiseR * envelope;
+    // Combine paths with stereo decorrelation
+    left[i] = (noiseL + earlyReflectionsL) * envelope * damping;
+    right[i] = (noiseR + earlyReflectionsR) * envelope * damping;
+    
+    // Add some "air" jitter for hyper spatial
+    if (isHyper && i % 4 === 0) {
+      left[i] *= (1 + (Math.random() - 0.5) * 0.05);
+      right[i] *= (1 + (Math.random() - 0.5) * 0.05);
+    }
+  }
+
+  // Pre-filter the impulse response to avoid muddiness
+  // (In a real pro engine we would use a low-cut here, but simple normalization helps)
+  let maxVal = 0;
+  for (let i = 0; i < length; i++) {
+    maxVal = Math.max(maxVal, Math.abs(left[i]), Math.abs(right[i]));
+  }
+  if (maxVal > 0) {
+    for (let i = 0; i < length; i++) {
+      left[i] /= maxVal * 1.5;
+      right[i] /= maxVal * 1.5;
+    }
   }
 
   impulseCache.set(cacheKey, buffer);
@@ -58,6 +97,7 @@ class SpotuiAudioEngine {
 
   // Spatial & Reverb Subgraph Nodes
   private spatialInputNode: GainNode | null = null;
+  private pannerNode: PannerNode | null = null;
   private dryDirectGainNode: GainNode | null = null;
   private midGainNode: GainNode | null = null;
   private sideGainNode: GainNode | null = null;
@@ -82,6 +122,9 @@ class SpotuiAudioEngine {
   private activeSpatialMode: SpatialMode = 'off';
   private activeReverbWet = 0.15;
   private activeStereoWidth = 100;
+  private spatialX = 0;
+  private spatialY = 0;
+  private spatialZ = -1;
 
   // Test tone generator
   private testToneOsc: OscillatorNode | null = null;
@@ -239,9 +282,24 @@ class SpotuiAudioEngine {
       }
 
       // ------------------------------------------------------------------------
-      // DEDICATED SPATIAL & ACOUSTIC REVERB SUBGRAPH
+      // DEDICATED 3D HRTF SPATIAL & ACOUSTIC REVERB SUBGRAPH
       // ------------------------------------------------------------------------
       this.spatialInputNode = this.ctx.createGain();
+      this.pannerNode = this.ctx.createPanner();
+      this.pannerNode.panningModel = 'HRTF';
+      this.pannerNode.distanceModel = 'inverse';
+      this.pannerNode.refDistance = 1;
+      this.pannerNode.maxDistance = 10000;
+      this.pannerNode.rolloffFactor = 1;
+      this.pannerNode.coneInnerAngle = 360;
+      if (this.pannerNode.positionX) {
+        this.pannerNode.positionX.setValueAtTime(this.spatialX, this.ctx.currentTime);
+        this.pannerNode.positionY.setValueAtTime(this.spatialY, this.ctx.currentTime);
+        this.pannerNode.positionZ.setValueAtTime(this.spatialZ, this.ctx.currentTime);
+      } else {
+        this.pannerNode.setPosition(this.spatialX, this.spatialY, this.spatialZ);
+      }
+
       this.dryDirectGainNode = this.ctx.createGain();
       this.reverbDryGainNode = this.ctx.createGain();
       this.reverbWetGainNode = this.ctx.createGain();
@@ -262,12 +320,15 @@ class SpotuiAudioEngine {
       this.compressorNode.connect(this.masterGainNode);
       this.masterGainNode.connect(this.spatialInputNode);
 
+      // Route through 3D HRTF Panner
+      this.spatialInputNode.connect(this.pannerNode);
+
       // Branch 1: Direct Dry Path
-      this.spatialInputNode.connect(this.dryDirectGainNode);
+      this.pannerNode.connect(this.dryDirectGainNode);
       this.dryDirectGainNode.connect(this.spatialSummerNode);
 
       // Branch 2: Spatial Mid/Side Widener & Reverb Convolver
-      this.spatialInputNode.connect(this.haasDelayNode);
+      this.pannerNode.connect(this.haasDelayNode);
       this.haasDelayNode.connect(this.convolverNode);
       this.convolverNode.connect(this.reverbWetGainNode);
       this.reverbWetGainNode.connect(this.spatialSummerNode);
@@ -364,34 +425,39 @@ class SpotuiAudioEngine {
 
     switch (mode) {
       case 'studio':
-        decayTime = 0.45;
-        decayRate = 8.0;
-        modeWidthBoost = 1.1;
+        decayTime = 0.55;
+        decayRate = 7.0;
+        modeWidthBoost = 1.15;
         break;
       case 'wide':
-        decayTime = 0.8;
-        decayRate = 5.5;
-        modeWidthBoost = 1.45;
-        break;
-      case 'immersive':
-        decayTime = 1.35;
-        decayRate = 4.2;
-        modeWidthBoost = 1.65;
-        break;
-      case 'cinema':
-        decayTime = 1.85;
-        decayRate = 3.6;
-        modeWidthBoost = 1.35;
-        break;
-      case 'hall':
-        decayTime = 2.75;
-        decayRate = 2.8;
+        decayTime = 0.9;
+        decayRate = 5.0;
         modeWidthBoost = 1.55;
         break;
+      case 'immersive':
+        decayTime = 1.5;
+        decayRate = 3.8;
+        modeWidthBoost = 1.85;
+        break;
+      case 'hyper_spatial':
+        decayTime = 2.2;
+        decayRate = 3.2;
+        modeWidthBoost = 2.5; // Massive width boost
+        break;
+      case 'cinema':
+        decayTime = 2.1;
+        decayRate = 3.4;
+        modeWidthBoost = 1.45;
+        break;
+      case 'hall':
+        decayTime = 3.2;
+        decayRate = 2.5;
+        modeWidthBoost = 1.65;
+        break;
       case 'club':
-        decayTime = 1.05;
-        decayRate = 5.0;
-        modeWidthBoost = 1.3;
+        decayTime = 1.2;
+        decayRate = 4.5;
+        modeWidthBoost = 1.4;
         break;
       case 'off':
       default:
@@ -798,6 +864,22 @@ class SpotuiAudioEngine {
 
   public onEnded(cb: () => void) {
     this.onEndedCallback = cb;
+  }
+
+  public set3DSpatialPosition(x: number, y: number, z: number) {
+    this.spatialX = x;
+    this.spatialY = y;
+    this.spatialZ = z;
+    if (this.ctx && this.pannerNode) {
+      const currTime = this.ctx.currentTime;
+      if (this.pannerNode.positionX) {
+        this.pannerNode.positionX.setTargetAtTime(x, currTime, 0.05);
+        this.pannerNode.positionY.setTargetAtTime(y, currTime, 0.05);
+        this.pannerNode.positionZ.setTargetAtTime(z, currTime, 0.05);
+      } else {
+        this.pannerNode.setPosition(x, y, z);
+      }
+    }
   }
 
   public onError(cb: (err: string) => void) {

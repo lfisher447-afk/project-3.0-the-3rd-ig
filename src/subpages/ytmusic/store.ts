@@ -8,7 +8,7 @@ import {
   normalizeAuthorKey,
   pickImage,
   withTopicSuffix,
-} from "@utils";
+} from "./utils";
 import {
   config,
   playerBackground,
@@ -16,19 +16,17 @@ import {
   VOLUME_PRESETS,
   drawer,
   setDrawer,
-} from "@config";
+} from "./config";
 import {
   addToCollection,
   recordTrackPlay,
   cacheTrackOnFinished,
   getLibraryAlbums,
-} from "@modules/library";
-import { player } from "@modules/playback";
-import { cssVar, themer } from "@modules/theme";
-import {
-  checkSponsorBlock,
-  clearSponsorSegments,
-} from "@modules/sponsorBlock";
+} from "./modules/library";
+import { player } from "./modules/playback";
+import { cssVar, themer } from "./modules/theme";
+
+// Types are defined in types.d.ts which is global
 
 export type SetStoreFunction<T> = {
   <K extends keyof T>(key: K, value: T[K] | ((prev: T[K]) => T[K])): void;
@@ -118,553 +116,97 @@ export function createStore<T extends object>(initialState: T): [
   return [proxy, setStore, useStore, subscribe] as const;
 }
 
-const nlRaw =
-  typeof navigator !== "undefined" && navigator.language
-    ? navigator.language.split("-")[0]
-    : "en";
-const nl = nlRaw === "cn" ? "zh" : nlRaw;
-const hasLocales = typeof Locales !== "undefined";
-const rawConfigLang = config.language === "cn" ? "zh" : config.language;
-const initLocale =
-  rawConfigLang || (hasLocales && Locales.includes(nl) ? nl : "en");
-
-const storeInit: {
-  useSaavn: boolean;
-  api: string;
-  updater?: () => void;
-  actionsMenu?: TrackItem & { albumId?: string };
-  snackbar?: string;
-  syncState?: SyncState;
-  locale: string;
-  translations: Record<TranslationKeys, string> | {};
-  libraryUpdated: number;
-} = {
-  api: "",
-  useSaavn: true,
-  locale: initLocale,
-  translations: {},
+const storeInit = {
+  api: "/api/ytmusic",
+  useSaavn: false,
+  locale: "en",
+  translations: {} as Record<string, string>,
   libraryUpdated: 0,
+  actionsMenu: undefined as TrackItem | undefined,
+  snackbar: "",
+  syncState: "synced" as SyncState,
 };
 
 export const [store, setStore, useAppStore] = createStore(storeInit);
 
 export function t(key: TranslationKeys, value: string = ""): string {
-  const translations = store.translations as Record<TranslationKeys, string>;
+  const translations = store.translations;
   const translatedString = translations[key] || (key as string);
   return value ? translatedString.replace("$", value) : translatedString;
 }
 
 export async function updateLang() {
-  let targetLocale = store.locale === "cn" ? "zh" : store.locale;
-  document.documentElement.lang = targetLocale;
-
+  const locale = store.locale || "en";
   try {
-    const json = await import(`./locales/${targetLocale}.json`);
-    setStore("translations", json.default);
-  } catch {
-    const fallback = await import("./locales/en.json");
-    setStore("translations", fallback.default);
+    const response = await fetch(`/src/subpages/ytmusic/locales/${locale}.json`);
+    const data = await response.json();
+    setStore("translations", data);
+  } catch (e) {
+    console.error("Failed to load locale", e);
   }
-  return true;
 }
 
-const Search = lazy(() => import("@features/Search"));
-const Library = lazy(() => import("@features/Library"));
-const List = lazy(() => import("@features/List"));
-const Queue = lazy(() => import("@features/Queue"));
-const Player = lazy(() => import("@features/Player"));
-const Settings = lazy(() => import("@features/Settings"));
+// Lazy loaded features
+const Search = lazy(() => import("./features/Search"));
+const Library = lazy(() => import("./features/List"));
+const List = lazy(() => import("./features/List"));
+const Queue = lazy(() => import("./features/Queue"));
+const Player = lazy(() => import("./features/Player"));
+const Settings = lazy(() => import("./features/Settings"));
 
-export const params = new URL(
-  typeof location !== "undefined" ? location.href : "https://ytify.app/",
-).searchParams;
-
-export type MainFeature = "queue" | "search" | "library" | "list" | "settings";
-type SidePanel = "player";
-
-type Nav = {
-  [key in MainFeature]: {
-    ref: HTMLElement | null;
-    component: React.ComponentType<any>;
-  };
-} & {
-  [key in SidePanel]: {
-    ref: HTMLElement | null;
-    state: boolean;
-    component: React.ComponentType<any>;
-  };
-};
-
-export const [navStore, setNavStore, useNavStore] = createStore<
-  Nav & { active: MainFeature }
->({
-  active: "search",
-  player: { ref: null, state: false, component: Player },
-  queue: { ref: null, component: Queue },
-  search: { ref: null, component: Search },
-  library: { ref: null, component: Library },
-  list: { ref: null, component: List },
-  settings: { ref: null, component: Settings },
+export const [navStore, setNavStore, useNavStore] = createStore({
+  active: "search" as MainFeature,
+  player: { ref: null as HTMLElement | null, state: false, component: Player },
+  queue: { ref: null as HTMLElement | null, component: Queue },
+  search: { ref: null as HTMLElement | null, component: Search },
+  library: { ref: null as HTMLElement | null, component: Library },
+  list: { ref: null as HTMLElement | null, component: List },
+  settings: { ref: null as HTMLElement | null, component: Settings },
 });
 
-function getCleanHref(targetFeature: MainFeature): string {
-  if (typeof location === "undefined") return "";
-  const url = new URL(location.href);
-  url.searchParams.delete("library");
-  params.delete("library");
-
-  let query = url.searchParams.toString();
-  if (targetFeature === "library") {
-    params.set("library", "");
-    query = query ? `${query}&library` : "library";
-  }
-  return url.pathname + (query ? `?${query}` : "") + url.hash;
-}
+export type MainFeature = "queue" | "search" | "library" | "list" | "settings";
 
 export function openSubView(feature: MainFeature) {
-  if (feature === "search") {
-    if (typeof history !== "undefined") {
-      history.replaceState(
-        { ...(history.state || {}), panel: null },
-        "",
-        getCleanHref("search"),
-      );
-    }
-    setNavStore("active", "search");
-    return;
-  }
-  if (navStore.active !== feature) {
-    if (typeof history !== "undefined") {
-      const href = getCleanHref(feature);
-      history.pushState({ panel: feature }, "", href);
-    }
-    setNavStore("active", feature);
-  }
+  setNavStore("active", feature);
 }
 
 export function closeSubView() {
-  if (typeof history !== "undefined" && history.state?.panel) {
-    history.back();
-  } else {
-    if (typeof history !== "undefined") {
-      history.replaceState(
-        { ...(history.state || {}), panel: null },
-        "",
-        getCleanHref("search"),
-      );
-    }
-    setNavStore("active", "search");
-  }
+  setNavStore("active", "search");
 }
 
-if (typeof window !== "undefined") {
-  window.addEventListener("popstate", (e) => {
-    if (e.state?.panel) {
-      if (e.state.panel === "library") {
-        params.set("library", "");
-      } else {
-        params.delete("library");
-      }
-      setNavStore("active", e.state.panel);
-    } else {
-      params.delete("library");
-      setNavStore("active", "search");
-    }
-  });
-}
+export const params = new URLSearchParams(window.location.search);
 
-type Params =
-  | "q"
-  | "s"
-  | "f"
-  | "collection"
-  | "playlist"
-  | "channel"
-  | "artist"
-  | "album"
-  | "si"
-  | "t";
-
-const listParams: Params[] = [
-  "playlist",
-  "channel",
-  "artist",
-  "album",
-  "collection",
-  "si",
-];
-
-export function updateParam(param: Params, value?: string) {
+export function updateParam(key: string, value?: string) {
   if (value) {
-    if (listParams.includes(param)) {
-      listParams.forEach((p) => params.delete(p));
-      params.delete("q");
-      params.delete("f");
-      params.delete("library");
-    }
-    if (param === "q" || param === "f") {
-      listParams.forEach((p) => params.delete(p));
-      params.delete("library");
-    }
-    params.set(param, value);
-  } else params.delete(param);
-
-  params.delete("library");
-  let str = params.toString();
-  if (navStore.active === "library") {
-    params.set("library", "");
-    str = str ? `${str}&library` : "library";
+    params.set(key, value);
+  } else {
+    params.delete(key);
   }
-
-  if (typeof history !== "undefined" && typeof location !== "undefined") {
-    history.replaceState(
-      history.state || {},
-      "",
-      location.origin + location.pathname + (str && "?") + str,
-    );
-  }
+  const newUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "");
+  window.history.replaceState({}, "", newUrl);
 }
 
-const blankImage =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+const blankImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
-type PlayerStore = {
-  stream: TrackItem & { albumId?: string };
-  audio: HTMLAudioElement;
-  context: {
-    src: Context;
-    id: string;
-  };
-  currentTime: number;
-  fullDuration: number;
-  playbackRate: number;
-  loop: boolean;
-  volume: number;
-  status: string;
-  playbackState: "none" | "playing" | "paused" | "loading";
-  mediaArtwork: string;
-  supportsOpus: Promise<boolean>;
-  data: {};
-  isMusic: boolean;
-  audioURL: string;
-  videoURL: string;
-  isWatching: boolean;
-  saveProgress: boolean;
-  proxy: string;
-  lrcSync?: (d: number) => void;
-};
-
-const createAudioElement = (): HTMLAudioElement => {
-  if (typeof Audio !== "undefined") return new Audio();
-  return {
-    volume: 1,
-    currentTime: 0,
-    playbackRate: 1,
-    loop: false,
-    src: "",
-    duration: 0,
-    play: async () => {},
-    pause: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  } as unknown as HTMLAudioElement;
-};
-
-const createPlayerInitialState = (): PlayerStore => ({
-  audio: createAudioElement(),
-  playbackState: "none",
-  context: { id: "", src: "" },
+export const [playerStore, setPlayerStore, usePlayerStore] = createStore({
+  audio: new Audio(),
+  playbackState: "none" as "none" | "playing" | "paused" | "loading",
+  context: { id: "", src: "" as Context },
   status: "",
   currentTime: 0,
   fullDuration: 0,
   playbackRate: 1.0,
   loop: false,
-  volume: parseFloat(config.volume) / 100,
-  stream: {
-    title: "",
-    author: "",
-    authorId: "",
-    id: "",
-    duration: "",
-  },
+  volume: 1.0,
+  stream: { title: "", author: "", authorId: "", id: "", duration: "" } as TrackItem,
   mediaArtwork: blankImage,
-  supportsOpus:
-    typeof navigator !== "undefined" && navigator.mediaCapabilities
-      ? navigator.mediaCapabilities
-          .decodingInfo({
-            type: "file",
-            audio: {
-              contentType: "audio/webm;codecs=opus",
-            },
-          })
-          .then((res) => res.supported)
-      : Promise.resolve(false),
-  data: {},
   isMusic: true,
   audioURL: "",
   videoURL: "",
-  isWatching: Boolean(config.watchMode),
-  saveProgress: Boolean(params.get("t")),
+  isWatching: false,
+  saveProgress: false,
   proxy: "",
 });
-
-export const [playerStore, setPlayerStore, usePlayerStore] = createStore(
-  createPlayerInitialState(),
-);
-
-export function playNext() {
-  const { stream } = playerStore;
-  const { list } = queueStore;
-  const nextStream = list[0];
-
-  if (!nextStream) return;
-
-  if (stream.id) setQueueStore("history", (h) => [{ ...stream }, ...h]);
-
-  setPlayerStore("stream", nextStream);
-  setPlayerStore("context", {
-    id: nextStream.context?.id || "",
-    src: nextStream.context?.src || "",
-  });
-  setQueueStore("list", (l) => {
-    let newList = l.slice(1);
-    if (newList.length > 1) {
-      if (config.persistentShuffle) newList = shuffle(newList);
-      if (config.authorGrouping) newList = groupQueueByAuthor(newList);
-    }
-    return newList;
-  });
-  player(nextStream.id);
-}
-
-export function playPrev() {
-  const { stream } = playerStore;
-  const { history } = queueStore;
-
-  const prevStream = history[0];
-  if (!prevStream) return;
-
-  setQueueStore("history", (h) => h.slice(1));
-  if (stream.id) setQueueStore("list", (l) => [{ ...stream }, ...l]);
-
-  setPlayerStore("stream", prevStream);
-  setPlayerStore("context", {
-    id: prevStream.context?.id || "",
-    src: prevStream.context?.src || "",
-  });
-  player(prevStream.id);
-}
-
-export function setVolume(volume: number) {
-  const vol = clamp(volume, 0, 1);
-  playerStore.audio.volume = vol;
-  setPlayerStore("volume", vol);
-  setConfig("volume", (vol * 100).toString());
-}
-
-export function stepVolume(direction: 1 | -1) {
-  const current = playerStore.volume * 100;
-  const next =
-    direction > 0
-      ? VOLUME_PRESETS.find((preset) => preset > current)
-      : VOLUME_PRESETS.findLast((preset) => preset < current);
-  setVolume((next ?? (direction > 0 ? 100 : 0)) / 100);
-}
-
-let lastAudibleVolume = playerStore.volume > 0 ? playerStore.volume : 1;
-
-export function toggleMute() {
-  if (playerStore.volume > 0) {
-    lastAudibleVolume = playerStore.volume;
-    playerStore.audio.volume = 0;
-    setPlayerStore("volume", 0);
-  } else {
-    setVolume(lastAudibleVolume);
-  }
-}
-
-// Initialize audio player events
-let historyID: string | undefined = "";
-let historyTimeoutId = 0;
-let playCountedForTrackId = "";
-
-if (typeof navigator !== "undefined" && "mediaSession" in navigator)
-  import("@modules/mediaSession").then((m) => m.initMediaSession());
-
-playerStore.audio.volume = playerStore.volume;
-
-playerStore.audio.onended = () => {
-  cacheTrackOnFinished(playerStore.stream);
-  if (queueStore.list.length) playNext();
-  else {
-    updateParam("s");
-    updateParam("t");
-    setPlayerStore("saveProgress", false);
-    setPlayerStore("playbackState", "none");
-    clearSponsorSegments();
-    if (typeof navigator !== "undefined" && "mediaSession" in navigator)
-      import("@modules/mediaSession").then((m) =>
-        m.updateMediaSessionPlaybackState("none"),
-      );
-  }
-};
-
-playerStore.audio.onplaying = () => {
-  setPlayerStore("playbackState", "playing");
-  if (typeof navigator !== "undefined" && "mediaSession" in navigator)
-    import("@modules/mediaSession").then((m) => {
-      m.updateMediaSessionPlaybackState("playing");
-      m.updateMediaSessionPosition();
-    });
-
-  const { stream } = playerStore;
-  const { id } = stream;
-
-  if (id && playCountedForTrackId !== id) {
-    clearTimeout(historyTimeoutId);
-    historyTimeoutId = setTimeout(() => {
-      if (historyID === id && playCountedForTrackId !== id) {
-        playCountedForTrackId = id;
-        recordTrackPlay(playerStore.stream);
-
-        if (config.similarContent && playerStore.isMusic)
-          getRecommendations();
-
-        if (config.history) {
-          addToCollection("history", [playerStore.stream]);
-        }
-      }
-    }, 1e4) as unknown as number;
-  }
-};
-
-playerStore.audio.onpause = () => {
-  setPlayerStore("playbackState", "paused");
-  if (typeof navigator !== "undefined" && "mediaSession" in navigator)
-    import("@modules/mediaSession").then((m) => {
-      m.updateMediaSessionPlaybackState("paused");
-      m.updateMediaSessionPosition();
-    });
-  clearTimeout(historyTimeoutId);
-};
-
-if (typeof playerStore.audio.addEventListener === "function") {
-  playerStore.audio.addEventListener("loadeddata", themer);
-}
-
-let isPlayable = false;
-const playableCheckerID = setInterval(() => {
-  if (
-    queueStore.history.length ||
-    params.has("url") ||
-    params.has("text") ||
-    !params.has("s")
-  ) {
-    isPlayable = true;
-    clearInterval(playableCheckerID);
-  }
-}, 500);
-
-playerStore.audio.onloadstart = () => {
-  setPlayerStore("playbackState", "paused");
-  setPlayerStore("status", "");
-  if (isPlayable) playerStore.audio.play();
-
-  historyID = playerStore.stream.id;
-  playCountedForTrackId = "";
-  clearTimeout(historyTimeoutId);
-  playerStore.audio.playbackRate = playerStore.playbackRate;
-};
-
-playerStore.audio.onwaiting = () => {
-  setPlayerStore("playbackState", "loading");
-};
-
-playerStore.audio.ontimeupdate = () => {
-  if (
-    typeof document !== "undefined" &&
-    document.activeElement?.matches('input[type="range"]')
-  )
-    return;
-
-  const { audio, lrcSync, fullDuration, isMusic } = playerStore;
-
-  // Lyrics
-  if (lrcSync) lrcSync(audio.currentTime);
-
-  const seconds = Math.floor(audio.currentTime);
-
-  setPlayerStore("currentTime", seconds);
-  checkSponsorBlock(audio.currentTime);
-
-  // Artwork background pans with the progress, motion backgrounds only.
-  if (isMusic && playerBackground().endsWith("-motion") && fullDuration > 0) {
-    const { ref } = navStore.player;
-    if (ref) {
-      const diff = ref.offsetHeight - ref.offsetWidth;
-      const shift = Math.floor((seconds / fullDuration) * diff);
-      cssVar("--player-bp", `-${shift}px 0`);
-    }
-  }
-
-  const t = params.get("t");
-
-  if (t) {
-    if (isMusic) {
-      updateParam("t");
-      if (playerStore.saveProgress) {
-        setPlayerStore("saveProgress", false);
-        updateParam("s");
-      }
-    } else {
-      if (seconds % 5 === 0) {
-        const str = seconds.toString();
-        if (t !== str) updateParam("t", str);
-      }
-    }
-  }
-};
-
-playerStore.audio.onloadedmetadata = () => {
-  setPlayerStore({
-    currentTime: 0,
-    fullDuration: Math.floor(playerStore.audio.duration || 0),
-  });
-
-  if (typeof navigator !== "undefined" && "mediaSession" in navigator)
-    import("@modules/mediaSession").then((m) =>
-      m.updateMediaSessionPosition(),
-    );
-};
-
-playerStore.audio.onerror = () =>
-  import("@modules/audioErrorHandler").then((mod) =>
-    mod.default(playerStore.audio),
-  );
-
-async function getRecommendations() {
-  const currentTitle = playerStore.stream.title;
-  const title = encodeURIComponent(currentTitle);
-  const artist = encodeURIComponent(
-    playerStore.stream.author?.slice(0, -8) ?? "",
-  );
-  fetch(`${store.api}/similar?title=${title}&artist=${artist}&limit=10`)
-    .then((res) => res.json())
-    .then((data: any) =>
-      addToQueue(
-        data.map((item: TrackItem) => ({
-          ...item,
-          context: { src: "queue", id: `Similar to ${currentTitle}` },
-        })),
-      ),
-    )
-    .catch((e) =>
-      setStore(
-        "snackbar",
-        `Could not get recommendations for the track: ${e.message}`,
-      ),
-    );
-}
 
 export const [queueStore, setQueueStore, useQueueStore] = createStore({
   list: [] as TrackItem[],
@@ -673,225 +215,54 @@ export const [queueStore, setQueueStore, useQueueStore] = createStore({
   isLoading: false,
 });
 
-function filterItemsByConfig(
-  items: TrackItem[],
-  options: {
-    ignoreList?: TrackItem[];
-  } = {},
-): TrackItem[] {
-  const historyIds = new Set(queueStore.history.map((i) => i.id));
-  const queueIds = new Set(queueStore.list.map((i) => i.id));
-  const ignoreIds = new Set(options.ignoreList?.map((i) => i.id) || []);
-  const currentId = playerStore.stream.id;
-  const durationLimit = config.durationFilter
-    ? parseDuration(config.durationFilter)
-    : Infinity;
-
-  return items.filter((item) => {
-    if (!item.id) return false;
-
-    if (item.context?.src === "") return true;
-
-    return (
-      item.id !== currentId &&
-      !queueIds.has(item.id) &&
-      !historyIds.has(item.id) &&
-      !ignoreIds.has(item.id) &&
-      parseDuration(item.duration) < durationLimit
-    );
-  });
-}
-
-export function addToQueue(
-  items: TrackItem[],
-  options: {
-    replace?: boolean;
-    prepend?: boolean;
-  } = {},
-) {
-  let itemsToAdd = filterItemsByConfig(items);
-
-  setQueueStore("list", (prevList: TrackItem[]) => {
-    let combined = options.replace
-      ? itemsToAdd
-      : options.prepend
-        ? [...itemsToAdd, ...prevList]
-        : [...prevList, ...itemsToAdd];
-    if (combined.length > 1) {
-      if (config.persistentShuffle) combined = shuffle(combined);
-      if (config.authorGrouping) combined = groupQueueByAuthor(combined);
-    }
+export function addToQueue(items: TrackItem[], options: { replace?: boolean, prepend?: boolean } = {}) {
+  setQueueStore("list", prev => {
+    let combined = options.replace ? items : (options.prepend ? [...items, ...prev] : [...prev, ...items]);
     return combined;
   });
 }
 
-export function groupQueueByAuthor(list: TrackItem[]): TrackItem[] {
-  if (list.length <= 1) return [...list];
-  const result: TrackItem[] = [];
-  const remaining = [...list];
-
-  while (remaining.length > 0) {
-    const current = remaining.shift()!;
-    result.push(current);
-    const currentNorm = normalizeAuthorKey(current.author);
-    if (currentNorm) {
-      for (let i = 0; i < remaining.length; i++) {
-        if (normalizeAuthorKey(remaining[i].author) === currentNorm) {
-          result.push(remaining.splice(i, 1)[0]);
-          i--;
-        }
-      }
-    }
+export function playNext() {
+  const next = queueStore.list[0];
+  if (next) {
+    setPlayerStore("stream", next);
+    setQueueStore("list", prev => prev.slice(1));
+    player(next.id);
   }
-  return result;
+}
+
+export function playPrev() {
+  const prev = queueStore.history[0];
+  if (prev) {
+    setPlayerStore("stream", prev);
+    setQueueStore("history", h => h.slice(1));
+    player(prev.id);
+  }
 }
 
 export function totalQueueDuration(list: TrackItem[]): string {
-  if (list.length === 0) return "";
-  const totalSeconds = list.reduce(
-    (acc, item) => acc + parseDuration(item.duration),
-    0,
-  );
-  return convertSStoHHMMSS(totalSeconds);
+  const total = list.reduce((acc, item) => acc + parseDuration(item.duration), 0);
+  return convertSStoHHMMSS(total);
 }
 
-const createSearchInitialState = () => ({
+export const [searchStore, setSearchStore, useSearchStore] = createStore({
   query: "",
-  results: [] as (YTItem | YTListItem)[],
+  results: [] as YTItem[],
   isLoading: false,
   page: 1,
-  suggestions: {
-    data: [] as string[],
-    index: -1,
-    controller: new AbortController(),
-  },
-  observer: { disconnect() {} } as IntersectionObserver,
+  suggestions: { data: [] as string[], index: -1, controller: new AbortController() },
 });
 
-export const [searchStore, setSearchStore, useSearchStore] = createStore(
-  createSearchInitialState(),
-);
-
-let suggestionTimeout: ReturnType<typeof setTimeout> | undefined;
-let lastQuery = "";
-const DEBOUNCE_TIME = 400;
-
-function cancelPendingSuggestions() {
-  clearTimeout(suggestionTimeout);
-  searchStore.suggestions?.controller?.abort();
-}
-
-export function clearSuggestions() {
-  cancelPendingSuggestions();
-  lastQuery = "";
-  setSearchStore("suggestions", "data", []);
-  setSearchStore("suggestions", "index", -1);
-}
-
-export function getSearchSuggestions(text: string) {
-  cancelPendingSuggestions();
-
-  if (text.length < 3) {
-    setSearchStore("suggestions", "data", []);
-    lastQuery = "";
-    return;
-  }
-
-  if (text === lastQuery) return;
-
-  suggestionTimeout = setTimeout(() => {
-    lastQuery = text;
-    setSearchStore("page", 1);
-    setSearchStore("suggestions", "index", -1);
-
-    const newController = new AbortController();
-    setSearchStore("suggestions", "controller", newController);
-
-    const isMusic = ["song", "artist", "album"].includes(config.searchFilter);
-    const url = `/search-suggestions?q=${encodeURIComponent(text)}&music=${isMusic}`;
-
-    fetch(url, { signal: newController.signal })
-      .then((res) => res.json() as Promise<string[]>)
-      .then((data) => {
-        if (searchStore.suggestions.controller !== newController) return;
-        setSearchStore("suggestions", "data", data);
-      })
-      .catch((e) => {
-        if (e.name === "AbortError") return;
-        setStore("snackbar", e.message);
-        setSearchStore("suggestions", "data", []);
-      });
-  }, DEBOUNCE_TIME);
-}
-
-export async function getSearchResults(force = false) {
-  const { query, results, isLoading } = searchStore;
-  const { searchFilter } = config;
-
-  if (!query || (isLoading && !force)) return;
-  if (!force && results.length > 0) return;
-
-  setSearchStore("isLoading", true);
-  clearSuggestions();
-  searchStore.observer.disconnect();
-
-  const { recentSearches } = drawer;
-  const lc = query.trim().toLowerCase();
-
-  if (
-    config.saveRecentSearches &&
-    lc &&
-    !lc.includes(" ") &&
-    !lc.includes(",")
-  ) {
-    if (recentSearches.includes(lc)) {
-      recentSearches.splice(recentSearches.indexOf(lc), 1);
-    }
-    recentSearches.push(lc);
-
-    while (recentSearches.length > 7) recentSearches.shift();
-
-    setDrawer("recentSearches", recentSearches);
-  }
-
-  const url = `${store.api}/search?q=${encodeURIComponent(query)}&f=${searchFilter}`;
-
-  fetch(url)
-    .then((res) => res.json() as Promise<(YTItem | YTListItem)[]>)
-    .then((data) => {
-      setSearchStore("results", data);
-    })
-    .catch((e) => {
-      setStore("snackbar", e.message);
-      setSearchStore("results", []);
-    })
-    .finally(() => {
-      setSearchStore("isLoading", false);
-    });
-
-  updateParam("q", query);
-  updateParam("f", searchFilter === "all" ? "" : searchFilter);
-}
-
-const createListInitialState = () => ({
+export const [listStore, setListStore, useListStore] = createStore({
   isLoading: false,
   isSubscribed: false,
   isSortable: false,
   isReversed: false,
   isShared: false,
   showStreamsNumber: false,
-  list: [] as YTItem[],
+  list: [] as TrackItem[],
   length: 0,
-  reservedCollections: [
-    "history",
-    "favorites",
-    "liked",
-    "listenLater",
-    "channels",
-    "playlists",
-    "cached",
-    "discovery",
-  ],
+  reservedCollections: ["history", "favorites", "liked", "listenLater", "channels", "playlists", "cached", "discovery"],
   name: "",
   url: "",
   type: "collection" as "channels" | "playlists" | "collection" | "album",
@@ -902,141 +273,94 @@ const createListInitialState = () => ({
   hasContinuation: false,
   artistAlbums: [] as YTAlbumItem[],
   artistEps: [] as YTAlbumItem[],
-  observer: { disconnect() {} } as IntersectionObserver,
 });
 
-export const [listStore, setListStore, useListStore] = createStore(
-  createListInitialState(),
-);
-
-export async function getList(
-  id: string,
-  type: "playlist" | "channel" | "album" | "artist",
-  all?: boolean,
-) {
-  setListStore("hasContinuation", false);
-
+export async function getList(id: string, type: string) {
   setListStore("isLoading", true);
   openSubView("list");
-  navStore.list.ref?.scrollIntoView({ behavior: "smooth" });
-
-  if (!all) updateParam(type, id);
-
-  if (!all && type === "playlist" && id.startsWith("OLAK5uy")) {
-    const libraryAlbums = getLibraryAlbums();
-    const savedAlbum = libraryAlbums.find((a) => a.id === id);
-    if (savedAlbum) {
-      setListStore({
-        img: savedAlbum.img,
-        id: id,
-        url: id,
-        type: "playlists",
-        name: savedAlbum.name,
-        author: savedAlbum.author,
-        list: [],
-      });
-    }
-  }
-
   try {
-    const res = await fetch(
-      `${store.api}/${type}?id=${id}${all ? "&all=true" : ""}`,
-    );
-    if (!res.ok) throw new Error(`Failed to fetch ${type}`);
-    const data = (await res.json()) as YTListItem;
+    const res = await fetch(`/api/ytmusic/${type}?id=${id}`);
+    const data = await res.json();
+    setListStore(data);
+  } catch (e) {
+    console.error("Failed to fetch list", e);
+  } finally {
+    setListStore("isLoading", false);
+  }
+}
 
-    if (data.type === "artist") {
-      const artist = data as YTArtistItem;
-      const contextId = "Artist - " + artist.name;
-      setListStore({
-        name: contextId,
-        id: id,
-        type: "channels",
-        url: id,
-        img: artist.img,
-        list: (artist.items || []).map(
-          (v) =>
-            ({
-              ...v,
-              author: withTopicSuffix(v.author),
-              context: { src: "channels" as const, id: contextId },
-            }) as YTItem,
-        ),
-        artistAlbums: artist.albums || [],
-        artistEps: artist.eps || [],
-      });
+export async function loadAll() {
+  const { id, type } = listStore;
+  if (!id || type !== "playlists") return;
+
+  setListStore("isLoading", true);
+  try {
+    const res = await fetch(`/api/ytmusic/playlist?id=${id}&all=true`);
+    const data = await res.json();
+    setListStore("list", data.list);
+    setListStore("hasContinuation", false);
+  } catch (e) {
+    console.error("Failed to load all items", e);
+  } finally {
+    setListStore("isLoading", false);
+  }
+}
+
+export async function getSearchResults(isForm?: boolean) {
+  const { query, page } = searchStore;
+  if (!query && !isForm) return;
+
+  setSearchStore("isLoading", true);
+  try {
+    const filter = config.searchFilter || "all";
+    const res = await fetch(`/api/ytmusic/search?q=${encodeURIComponent(query)}&f=${filter}&page=${page}`);
+    const data = await res.json();
+    
+    if (page === 1) {
+      setSearchStore("results", data);
     } else {
-      const listData = data as YTPlaylistItem | YTChannelItem | YTAlbumItem;
-      const isChannel = data.type === "channel";
-      const listType = isChannel
-        ? "channels"
-        : data.type === "album"
-          ? "album"
-          : "playlists";
-
-      const playlistImg = pickImage(
-        listData.img,
-        listStore.img,
-        listData.items?.[0]?.id,
-      );
-
-      setListStore({
-        name: listData.name,
-        img:
-          listType === "playlists"
-            ? playlistImg
-            : listData.img || listStore.img,
-        id: id,
-        author:
-          "author" in listData
-            ? (listData as YTPlaylistItem | YTAlbumItem).author || ""
-            : listData.name,
-        type: listType,
-        url: id,
-        hasContinuation:
-          "hasContinuation" in listData
-            ? (listData as YTPlaylistItem).hasContinuation
-            : false,
-        artistAlbums: [],
-        artistEps: [],
-        list: (listData.items || []).map(
-          (v) =>
-            ({
-              ...v,
-              author:
-                data.type === "album" && !isTopicAuthor(v.author)
-                  ? withTopicSuffix(v.author)
-                  : v.author,
-              context: { src: listType as Context, id: listData.name },
-            }) as YTItem,
-        ),
-      });
+      setSearchStore("results", prev => [...prev, ...data]);
     }
   } catch (e) {
-    setStore("snackbar", e instanceof Error ? e.message : "Unknown error");
-    resetList();
+    console.error("Failed to fetch search results", e);
+  } finally {
+    setSearchStore("isLoading", false);
   }
+}
 
-  setListStore("isLoading", false);
+export async function getSearchSuggestions(query: string) {
+  if (!query) return;
+  
+  // Abort previous request
+  searchStore.suggestions.controller.abort();
+  const controller = new AbortController();
+  setSearchStore("suggestions", "controller", controller);
+
+  try {
+    const res = await fetch(`/api/ytmusic/search-suggestions?q=${encodeURIComponent(query)}&music=true`, {
+      signal: controller.signal
+    });
+    const data = await res.json();
+    setSearchStore("suggestions", "data", data);
+  } catch (e: any) {
+    if (e.name !== "AbortError") {
+      console.error("Failed to fetch suggestions", e);
+    }
+  }
+}
+
+export function clearSuggestions() {
+  setSearchStore("suggestions", { data: [], index: -1, controller: searchStore.suggestions.controller });
 }
 
 export function resetList() {
-  if (navStore.active === "list") {
-    openSubView("search");
-  }
-  listStore.observer.disconnect();
-
-  updateParam("collection");
-  updateParam("playlist");
-  updateParam("channel");
-  updateParam("artist");
-  updateParam("album");
-  setListStore(createListInitialState());
-}
-
-export function loadAll() {
-  const { id, type } = listStore;
-  if (type === "playlists") {
-    getList(id, "playlist", true);
-  }
+  setListStore({
+    list: [],
+    name: "",
+    id: "",
+    img: "",
+    type: "collection",
+    artistAlbums: [],
+    artistEps: []
+  } as any);
 }

@@ -1,163 +1,151 @@
-import React, { useState, useEffect } from 'react';
-import { YtMusicSearch } from './search/YtMusicSearch';
-import { YtMusicPlayer } from './player/YtMusicPlayer';
-import { YtMusicTrack, ytMusicHandler } from './handler/YtMusicHandler';
-import { Track } from '../../types';
-import { Play, Flame, Sparkles, Radio, Loader2 } from 'lucide-react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  Suspense,
+  lazy,
+} from "react";
+import {
+  updateLang,
+  setStore,
+  useAppStore,
+  useNavStore,
+  setNavStore,
+  usePlayerStore,
+  playerStore,
+  playNext,
+  playPrev,
+} from "./store";
+import NavBar from "./components/NavBar";
+import MiniPlayer from "./components/MiniPlayer";
+import ActionsMenu from "./components/ActionsMenu";
+import SnackBar from "./components/SnackBar";
+import BootOS from "./components/BootOS";
+import { useConfig } from "./config";
 
-interface YtMusicMainProps {
-  currentTrack: Track | null;
-  isPlaying: boolean;
-  onPlayTrack: (track: Track, trackList?: Track[]) => void;
-  onTogglePlay: () => void;
-  onNext: () => void;
-  onPrev: () => void;
-  queue: Track[];
-  onAddToQueue: (track: Track) => void;
-  onRemoveFromQueue: (index: number) => void;
-  onClearQueue: () => void;
-  onOpenDsp: () => void;
-}
+export const YtMusicMain: React.FC<any> = () => {
+  const config = useConfig();
+  const [showBootOS, setShowBootOS] = useState(() => !config.hasCompletedBoot);
+  const [isPortrait, setIsPortrait] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(orientation: portrait)").matches
+      : false,
+  );
 
-export const YtMusicMain: React.FC<YtMusicMainProps> = ({
-  currentTrack,
-  isPlaying,
-  onPlayTrack,
-  onTogglePlay,
-  onNext,
-  onPrev,
-  queue,
-  onAddToQueue,
-  onRemoveFromQueue,
-  onClearQueue,
-  onOpenDsp,
-}) => {
-  const [charts, setCharts] = useState<YtMusicTrack[]>([]);
-  const [loadingCharts, setLoadingCharts] = useState(true);
+  const mainRef = useRef<HTMLElement>(null);
+  const leftPanelRef = useRef<HTMLDivElement>(null);
+  const rightPanelRef = useRef<HTMLDivElement>(null);
+
+  const store = useAppStore();
+  const navStore = useNavStore();
+  const playerState = usePlayerStore();
 
   useEffect(() => {
-    let mounted = true;
-    ytMusicHandler
-      .getTrendingCharts()
-      .then((data) => {
-        if (mounted) {
-          setCharts(data);
-          setLoadingCharts(false);
+    updateLang();
+    
+    const mql = window.matchMedia("(orientation: portrait)");
+    const updateOrientation = (e: MediaQueryListEvent) => setIsPortrait(e.matches);
+    mql.addEventListener("change", updateOrientation);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        ["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement).tagName) ||
+        (e.target as HTMLElement).isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        if (playerStore.audio.paused) {
+          playerStore.audio.play().catch(() => {});
+        } else {
+          playerStore.audio.pause();
         }
-      })
-      .catch(() => {
-        if (mounted) setLoadingCharts(false);
-      });
+      } else if (e.key === "ArrowLeft" && e.shiftKey) {
+        e.preventDefault();
+        playPrev();
+      } else if (e.key === "ArrowRight" && e.shiftKey) {
+        e.preventDefault();
+        playNext();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
 
     return () => {
-      mounted = false;
+      mql.removeEventListener("change", updateOrientation);
+      window.removeEventListener("keydown", onKeyDown);
     };
   }, []);
 
+  const Queue = navStore.queue.component;
+  const Search = navStore.search.component;
+  const Library = navStore.library.component;
+  const List = navStore.list.component;
+  const Settings = navStore.settings.component;
+  const Player = navStore.player.component;
+
+  const renderActiveFeature = () => {
+    switch (navStore.active) {
+      case "queue":
+        return <Queue />;
+      case "list":
+        return <List />;
+      case "settings":
+        return <Settings />;
+      case "library":
+        return <Library />;
+      case "search":
+      default:
+        return <Search />;
+    }
+  };
+
   return (
-    <div className="space-y-8 max-w-7xl mx-auto pb-16">
-      {/* Top Banner / Hero */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-[#07161e] via-[#0b2430] to-[#040e13] border border-[#163847] shadow-2xl relative overflow-hidden">
-        <div className="relative z-10 space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="px-3 py-1 rounded-full bg-[#143d4e] text-[#48e4ff] text-xs font-mono font-bold tracking-wider uppercase border border-[#225c75]">
-              YouTube Music • InnerTube Core
-            </span>
-            <span className="text-xs font-mono text-emerald-400 font-bold bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-800/40">
-              Live Stream Engine
-            </span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            Lossless Opus Streaming Deck
-          </h1>
-          <p className="text-sm text-zinc-300 max-w-2xl leading-relaxed">
-            Direct audio stream decoding from YouTube Music web remix servers without reliance on iframe embeds. Fully routed through your customizable 5-band DSP master equalizer.
-          </p>
+    <div className="relative h-[calc(100vh-64px)] bg-black overflow-hidden font-sans text-zinc-100">
+      <main
+        ref={mainRef}
+        className="flex h-full w-full transition-transform duration-500"
+      >
+        {/* Left Panel - Player (Hidden on mobile unless active) */}
+        <div 
+            className={`w-full lg:w-[450px] flex-shrink-0 border-r border-zinc-900 bg-zinc-950 overflow-hidden transition-all duration-500 absolute lg:relative z-30 h-full ${navStore.player.state ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`} 
+            ref={leftPanelRef}
+        >
+          <Suspense fallback={<div className="p-10 text-zinc-500 animate-pulse">Loading Player Engine...</div>}>
+            <Player />
+          </Suspense>
         </div>
-      </div>
-
-      {/* Primary Dedicated Player Deck */}
-      <YtMusicPlayer
-        currentTrack={currentTrack}
-        isPlaying={isPlaying}
-        onTogglePlay={onTogglePlay}
-        onNext={onNext}
-        onPrev={onPrev}
-        queue={queue}
-        onRemoveFromQueue={onRemoveFromQueue}
-        onClearQueue={onClearQueue}
-        onOpenDsp={onOpenDsp}
-      />
-
-      {/* Real Search Component */}
-      <YtMusicSearch onPlayTrack={onPlayTrack} onAddToQueue={onAddToQueue} />
-
-      {/* Trending Charts Section */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-white font-bold text-base">
-            <Flame size={20} className="text-amber-400" />
-            <span>Top Trending Music Hits</span>
+        
+        {/* Right Panel - Features */}
+        <div className="w-full flex-grow bg-zinc-950 overflow-hidden flex flex-col relative z-20" ref={rightPanelRef}>
+          <div className="flex-grow overflow-hidden">
+            <Suspense fallback={<div className="p-10 text-zinc-500 animate-pulse text-center">Calibrating Feature...</div>}>
+              {renderActiveFeature()}
+            </Suspense>
           </div>
-          <div className="flex items-center gap-3">
-            {charts.length > 0 && (
-              <button
-                onClick={() => {
-                  const trackList = charts.map((c) => ytMusicHandler.toAudioTrack(c));
-                  onPlayTrack(trackList[0], trackList);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#48e4ff]/10 hover:bg-[#48e4ff]/20 text-[#48e4ff] text-xs font-mono font-bold border border-[#48e4ff]/30 transition cursor-pointer"
-                title="Play Entire Trending Chart"
-              >
-                <Play size={13} fill="currentColor" />
-                <span>Play All ({charts.length})</span>
-              </button>
-            )}
-            <span className="text-xs font-mono text-zinc-400 hidden sm:inline">InnerTube Web Remix Feed</span>
+          
+          <div className="flex-shrink-0 border-t border-zinc-900 bg-zinc-950/80 backdrop-blur-md">
+            <MiniPlayer />
+            <NavBar />
           </div>
         </div>
+      </main>
 
-        {loadingCharts ? (
-          <div className="p-10 rounded-2xl bg-[#07161e] border border-[#163847] text-center text-xs font-mono text-zinc-400 flex items-center justify-center gap-2">
-            <Loader2 size={16} className="animate-spin text-[#48e4ff]" />
-            <span>Fetching Global Music Charts...</span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {charts.slice(0, 12).map((song) => (
-              <div
-                key={song.id}
-                onClick={() => {
-                  const track = ytMusicHandler.toAudioTrack(song);
-                  const trackList = charts.map((c) => ytMusicHandler.toAudioTrack(c));
-                  onPlayTrack(track, trackList);
-                }}
-                className="p-3 rounded-2xl bg-[#07161e] border border-[#153847] hover:border-[#48e4ff]/50 transition group cursor-pointer space-y-2"
-              >
-                <div className="relative aspect-square rounded-xl overflow-hidden bg-zinc-900">
-                  <img
-                    src={song.artwork}
-                    alt={song.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#48e4ff]">
-                    <div className="w-10 h-10 rounded-full bg-[#48e4ff] text-[#051a24] flex items-center justify-center shadow-lg">
-                      <Play size={18} fill="currentColor" className="ml-0.5" />
-                    </div>
-                  </div>
-                </div>
+      {store.actionsMenu && (
+        <Suspense fallback={null}>
+          <ActionsMenu />
+        </Suspense>
+      )}
+      
+      <SnackBar />
 
-                <div>
-                  <h4 className="text-xs font-bold text-white truncate group-hover:text-[#48e4ff] transition-colors">
-                    {song.title}
-                  </h4>
-                  <p className="text-[11px] text-zinc-400 truncate mt-0.5">{song.artist}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {showBootOS && (
+        <BootOS onComplete={() => setShowBootOS(false)} />
+      )}
     </div>
   );
 };
+
+export default YtMusicMain;

@@ -230,13 +230,17 @@ interface VaultVideoPlayerProps {
   onClose: () => void;
   settings?: AppSettings;
   onOpenDsp?: () => void;
+  initialUrl?: string;
+  initialTitle?: string;
 }
 
-export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onOpenDsp }) => {
+export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onOpenDsp, initialUrl, initialTitle }) => {
   // Active Video URL & Engine Selection
-  const [streamUrl, setStreamUrl] = useState<string>('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');
-  const [activeEngine, setActiveEngine] = useState<PlaybackEngine>('hls_js');
-  const [videoTitle, setVideoTitle] = useState<string>('Big Buck Bunny (1080p HLS)');
+  const [streamUrl, setStreamUrl] = useState<string>(initialUrl || 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');
+  const [activeEngine, setActiveEngine] = useState<PlaybackEngine>(
+    initialUrl?.endsWith('.m3u8') ? 'hls_js' : 'html5_native'
+  );
+  const [videoTitle, setVideoTitle] = useState<string>(initialTitle || (initialUrl ? 'Vault Local Video' : 'Big Buck Bunny (1080p HLS)'));
   const [customInputUrl, setCustomInputUrl] = useState<string>('');
 
   // Player Elements

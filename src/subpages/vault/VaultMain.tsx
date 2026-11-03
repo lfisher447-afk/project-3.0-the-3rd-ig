@@ -84,6 +84,8 @@ export const VaultMain: React.FC<VaultMainProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const backupInputRef = useRef<HTMLInputElement | null>(null);
   const [storageMetrics, setStorageMetrics] = useState<DetailedStorageMetrics | null>(null);
+  const [streamUrl, setStreamUrl] = useState<string | undefined>(undefined);
+  const [videoTitle, setVideoTitle] = useState<string | undefined>(undefined);
 
   React.useEffect(() => {
     getStorageMetrics().then(setStorageMetrics).catch(() => {});
@@ -236,8 +238,8 @@ export const VaultMain: React.FC<VaultMainProps> = ({
     onPlayTrack(plTracks[0], plTracks);
   };
 
-  // Audio File Processor
-  const processAudioFiles = async (files: FileList | File[]) => {
+  // Media File Processor (Audio & Video)
+  const processMediaFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
     setIsUploading(true);
 
@@ -245,26 +247,27 @@ export const VaultMain: React.FC<VaultMainProps> = ({
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|flac|ogg|m4a|aac|opus|webm)$/i)) {
-        continue;
-      }
+      const isAudio = file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|flac|ogg|m4a|aac|opus|webm)$/i);
+      const isVideo = file.type.startsWith('video/') || file.name.match(/\.(mp4|mkv|webm|mov|avi|m3u8|ts)$/i);
+      
+      if (!isAudio && !isVideo) continue;
 
-      // Read audio duration from in-memory Audio object
+      // Read duration
       let duration = 180;
       try {
         const objectUrl = URL.createObjectURL(file);
-        const tempAudio = new Audio();
-        tempAudio.src = objectUrl;
+        const media = isAudio ? new Audio() : document.createElement('video');
+        media.src = objectUrl;
 
         await new Promise<void>((resolve) => {
-          tempAudio.addEventListener('loadedmetadata', () => {
-            if (Number.isFinite(tempAudio.duration)) {
-              duration = Math.round(tempAudio.duration);
+          media.addEventListener('loadedmetadata', () => {
+            if (Number.isFinite(media.duration)) {
+              duration = Math.round(media.duration);
             }
             resolve();
           });
-          tempAudio.addEventListener('error', () => resolve());
-          setTimeout(resolve, 1500); // 1.5s timeout fallback
+          media.addEventListener('error', () => resolve());
+          setTimeout(resolve, 2000); // 2s timeout fallback
         });
         URL.revokeObjectURL(objectUrl);
       } catch {}
@@ -272,17 +275,17 @@ export const VaultMain: React.FC<VaultMainProps> = ({
       // Clean title and artist from filename
       const cleanName = file.name.replace(/\.[^/.]+$/, '');
       const parts = cleanName.split(' - ');
-      const artist = parts.length > 1 ? parts[0].trim() : 'Local Audio File';
+      const artist = parts.length > 1 ? parts[0].trim() : (isAudio ? 'Local Audio File' : 'Local Video File');
       const title = parts.length > 1 ? parts.slice(1).join(' - ').trim() : cleanName.trim();
 
       const track: Track = {
         id: `local_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 7)}`,
         title,
         artist,
-        album: 'Vault Local Storage',
+        album: isVideo ? 'Vault Video Library' : 'Vault Audio Library',
         duration,
         durationText: formatTime(duration),
-        source: 'local',
+        source: isVideo ? 'local_video' : 'local',
         fileName: file.name,
         size: file.size,
         addedAt: Date.now(),
@@ -296,10 +299,10 @@ export const VaultMain: React.FC<VaultMainProps> = ({
     if (newTracks.length > 0) {
       const updated = [...newTracks, ...tracks];
       onTracksChange(updated);
-      showToast(`Imported ${newTracks.length} lossless track(s) to Vault`);
+      showToast(`Imported ${newTracks.length} media item(s) to Vault`);
       setActiveTab('tracks');
     } else {
-      showToast('No valid audio files detected');
+      showToast('No valid media files detected');
     }
 
     setIsUploading(false);
@@ -373,9 +376,9 @@ export const VaultMain: React.FC<VaultMainProps> = ({
       <input
         type="file"
         ref={fileInputRef}
-        onChange={(e) => e.target.files && processAudioFiles(e.target.files)}
+        onChange={(e) => e.target.files && processMediaFiles(e.target.files)}
         multiple
-        accept="audio/*,.mp3,.flac,.m4a,.aac,.ogg,.opus,.wav,.webm"
+        accept="audio/*,video/*,.mp3,.flac,.m4a,.aac,.ogg,.opus,.wav,.webm,.mp4,.mkv,.mov,.avi,.m3u8,.ts"
         className="hidden"
       />
       <input
@@ -673,9 +676,9 @@ export const VaultMain: React.FC<VaultMainProps> = ({
                         <div className="w-6 text-center font-mono text-xs text-slate-500 shrink-0">
                           {isCurrent && isPlaying ? (
                             <div className="flex items-end justify-center gap-0.5 h-3.5">
-                              <span className="w-0.5 bg-cyan-400 rounded-full equalizer-bar-1" />
-                              <span className="w-0.5 bg-sky-300 rounded-full equalizer-bar-2" />
-                              <span className="w-0.5 bg-emerald-400 rounded-full equalizer-bar-3" />
+                              <span className="w-0.5 bg-cyan-400 rounded-full animate-[bounce_0.6s_infinite]" />
+                              <span className="w-0.5 bg-sky-300 rounded-full animate-[bounce_0.8s_infinite]" />
+                              <span className="w-0.5 bg-emerald-400 rounded-full animate-[bounce_0.7s_infinite]" />
                             </div>
                           ) : (
                             <span className="group-hover:hidden">{idx + 1}</span>
@@ -695,11 +698,20 @@ export const VaultMain: React.FC<VaultMainProps> = ({
                           />
                         ) : (
                           <div className="w-10 h-10 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-cyan-400 shrink-0">
-                            <Disc size={18} />
+                            {track.source === 'local_video' ? <Film size={18} /> : <Disc size={18} />}
                           </div>
                         )}
 
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0 flex-1" onClick={() => {
+                          if (track.source === 'local_video' && track.blob) {
+                            const url = URL.createObjectURL(track.blob);
+                            setStreamUrl(url);
+                            setVideoTitle(track.title);
+                            setShowVideoPlayer(true);
+                          } else {
+                            onPlayTrack(track, filteredTracks);
+                          }
+                        }}>
                           <div className={`text-xs font-bold truncate ${isCurrent ? 'text-cyan-300' : 'text-slate-100 group-hover:text-cyan-300'} transition-colors`}>
                             {track.title}
                           </div>
@@ -708,7 +720,7 @@ export const VaultMain: React.FC<VaultMainProps> = ({
                             {track.source && (
                               <>
                                 <span aria-hidden="true" className="text-slate-600">·</span>
-                                <span className="capitalize text-slate-500 text-[10px]">{track.source}</span>
+                                <span className="capitalize text-slate-500 text-[10px]">{track.source.replace('_', ' ')}</span>
                               </>
                             )}
                           </div>
@@ -863,7 +875,7 @@ export const VaultMain: React.FC<VaultMainProps> = ({
         </div>
       )}
 
-      {/* DROP AUDIO TAB */}
+      {/* DROP MEDIA TAB */}
       {activeTab === 'upload' && (
         <div
           onDragOver={(e) => {
@@ -875,7 +887,7 @@ export const VaultMain: React.FC<VaultMainProps> = ({
             e.preventDefault();
             setIsDraggingOver(false);
             if (e.dataTransfer.files) {
-              processAudioFiles(e.dataTransfer.files);
+              processMediaFiles(e.dataTransfer.files);
             }
           }}
           className={`p-12 border-2 border-dashed rounded-3xl text-center transition-all ${
@@ -885,14 +897,14 @@ export const VaultMain: React.FC<VaultMainProps> = ({
           }`}
         >
           <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto mb-4">
-            <FileAudio size={32} />
+            <Layers size={32} />
           </div>
 
           <h3 className="text-lg font-bold text-white mb-2">
-            Drag & Drop Audio Files Here
+            Drag & Drop Audio or Video Files
           </h3>
           <p className="text-xs text-slate-400 max-w-md mx-auto mb-6 leading-relaxed">
-            Support for MP3, WAV, FLAC, OGG, M4A, AAC, and Opus. Audio is decoded in browser and securely stored in your offline IndexedDB library.
+            Support for MP3, WAV, FLAC, M4A, AAC, Opus, MP4, MKV, and WebM. Media is decoded in browser and securely stored in your offline IndexedDB library.
           </p>
 
           <button
@@ -900,7 +912,7 @@ export const VaultMain: React.FC<VaultMainProps> = ({
             disabled={isUploading}
             className="px-6 py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-cyan-950/40 transition cursor-pointer disabled:opacity-50"
           >
-            {isUploading ? 'Importing Audio...' : 'Select Audio Files'}
+            {isUploading ? 'Importing Media...' : 'Select Files'}
           </button>
         </div>
       )}
@@ -1016,8 +1028,14 @@ export const VaultMain: React.FC<VaultMainProps> = ({
       {/* Vault Universal Video Player Modal (10 Playback Engines) */}
       {showVideoPlayer && (
         <VaultVideoPlayer
-          onClose={() => setShowVideoPlayer(false)}
+          onClose={() => {
+            setShowVideoPlayer(false);
+            setStreamUrl(undefined);
+            setVideoTitle(undefined);
+          }}
           onOpenDsp={onOpenDsp}
+          initialUrl={streamUrl}
+          initialTitle={videoTitle}
         />
       )}
     </div>
