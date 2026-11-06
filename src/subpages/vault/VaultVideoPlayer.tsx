@@ -8,8 +8,8 @@ import {
   Volume2,
   VolumeX,
   Volume1,
-  Maximize,
-  Minimize,
+  Maximize2,
+  Minimize2,
   Upload,
   X,
   Camera,
@@ -17,16 +17,78 @@ import {
   Sparkles,
   Link2,
   FileVideo,
-  Check,
 } from 'lucide-react';
+import { AppSettings } from '../../types';
 
-export interface ModernVideoPlayerProps {
-  onClose?: () => void;
-  initialUrl?: string;
-  initialTitle?: string;
+// Legacy compatibility types exported so other files won't fail build
+export type PlaybackEngine =
+  | 'hls_js'
+  | 'html5_native'
+  | 'dash_shaka'
+  | 'mse_streamer'
+  | 'canvas_shader'
+  | 'webaudio_dsp'
+  | 'p2p_torrent'
+  | 'invidious_proxy'
+  | 'worker_crypto'
+  | 'yt_embed';
+
+export interface EngineInfo {
+  id: PlaybackEngine;
+  name: string;
+  badge: string;
+  description: string;
+  flag: string;
+  supportedFormats: string[];
 }
 
-export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
+export const PLAYBACK_ENGINES: EngineInfo[] = [
+  {
+    id: 'hls_js',
+    name: 'HLS.js Adaptive Engine',
+    badge: 'Adaptive Stream',
+    description: 'Hardware-accelerated HTTP Live Streaming (.m3u8)',
+    flag: '⚡',
+    supportedFormats: ['.m3u8', 'HLS Live'],
+  },
+  {
+    id: 'html5_native',
+    name: 'HTML5 Native Media Engine',
+    badge: 'Direct Pipeline',
+    description: 'Direct browser pipeline for MP4, WebM, OGG, and MOV',
+    flag: '🚀',
+    supportedFormats: ['MP4', 'WebM', 'OGG', 'MOV'],
+  },
+];
+
+export interface SampleStream {
+  id: string;
+  title: string;
+  category: string;
+  url: string;
+  engine: PlaybackEngine;
+  resolution: string;
+  duration: string;
+  thumbnail: string;
+}
+
+export const SAMPLE_STREAMS: SampleStream[] = [];
+
+export interface ChapterMarker {
+  id: string;
+  time: number;
+  label: string;
+}
+
+export interface VaultVideoPlayerProps {
+  onClose?: () => void;
+  onOpenDsp?: () => void;
+  initialUrl?: string;
+  initialTitle?: string;
+  settings?: AppSettings;
+}
+
+export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({
   onClose,
   initialUrl = '',
   initialTitle = '',
@@ -61,11 +123,10 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const ambientCanvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hlsInstanceRef = useRef<Hls | null>(null);
   const activeBlobUrlRef = useRef<string | null>(null);
 
-  // Flash a quick notice on screen
   const notify = (msg: string) => {
     setScreenNotice(msg);
     setTimeout(() => setScreenNotice(null), 2400);
@@ -75,7 +136,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
   const loadVideo = useCallback((url: string, title?: string) => {
     if (!url) return;
 
-    // Clean up previous blob to avoid memory leaks
+    // Revoke previous blob to avoid memory leak
     if (activeBlobUrlRef.current && activeBlobUrlRef.current !== url) {
       URL.revokeObjectURL(activeBlobUrlRef.current);
       activeBlobUrlRef.current = null;
@@ -119,6 +180,21 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
       });
     }
   }, []);
+
+  // Handle Initial URL if provided
+  useEffect(() => {
+    if (initialUrl) {
+      loadVideo(initialUrl, initialTitle || 'Vault Stream');
+    }
+    return () => {
+      if (hlsInstanceRef.current) {
+        hlsInstanceRef.current.destroy();
+      }
+      if (activeBlobUrlRef.current) {
+        URL.revokeObjectURL(activeBlobUrlRef.current);
+      }
+    };
+  }, [initialUrl, initialTitle, loadVideo]);
 
   // Handle Local File Upload
   const handleFileUpload = (file: File) => {
@@ -220,7 +296,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     }
   };
 
-  // Toggle Fullscreen
+  // Fullscreen Handler
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen?.();
@@ -233,19 +309,20 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
 
   // Picture in Picture
   const togglePiP = async () => {
-    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (!video) return;
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
       } else {
-        await videoRef.current.requestPictureInPicture();
+        await video.requestPictureInPicture();
       }
     } catch {
       notify('Picture-in-Picture not supported');
     }
   };
 
-  // Capture High-Res Snapshot
+  // Screenshot Snapshot
   const captureSnapshot = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -260,10 +337,10 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         a.download = `${videoTitle.replace(/\s+/g, '_')}_${Math.floor(currentTime)}s.png`;
         a.href = canvas.toDataURL('image/png');
         a.click();
-        notify('Screenshot saved in high resolution');
+        notify('Screenshot downloaded in full quality');
       }
     } catch {
-      notify('Failed to capture snapshot (CORS restricted)');
+      notify('Snapshot restricted by CORS');
     }
   };
 
@@ -320,6 +397,9 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           e.preventDefault();
           captureSnapshot();
           break;
+        case 'escape':
+          if (onClose) onClose();
+          break;
       }
     };
 
@@ -327,7 +407,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [currentTime, duration, isPlaying, volume, isMuted, videoTitle]);
 
-  // Format seconds to mm:ss or hh:mm:ss
   const formatTime = (secs: number) => {
     if (isNaN(secs) || secs < 0) return '0:00';
     const h = Math.floor(secs / 3600);
@@ -374,7 +453,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Empty State / Welcome Screen when no video is loaded */}
+      {/* Welcome & Upload Screen if no video is active */}
       {!videoSrc ? (
         <div className="relative z-20 max-w-md w-full mx-4 p-8 rounded-3xl bg-zinc-900/60 border border-white/10 shadow-2xl backdrop-blur-2xl text-center space-y-6">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
@@ -384,7 +463,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           <div className="space-y-2">
             <h1 className="text-xl font-bold tracking-tight text-white">Upload a Video</h1>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Drag & drop any video file here, or click below to browse your computer or stream directly from a URL.
+              Drag & drop any video file here, or click below to pick from your files or stream from an online URL.
             </p>
           </div>
 
@@ -405,18 +484,19 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               <span>Open Online URL / Stream</span>
             </button>
 
-            <button
-              onClick={() => loadVideo('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4', 'Tears of Steel (Sample 4K)')}
-              className="text-[11px] text-zinc-500 hover:text-cyan-400 transition cursor-pointer pt-2"
-            >
-              Or play demo 4K trailer
-            </button>
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="text-xs text-zinc-500 hover:text-zinc-300 transition cursor-pointer pt-1"
+              >
+                Close Player
+              </button>
+            )}
           </div>
         </div>
       ) : (
         /* Video Container */
         <div className="relative w-full h-full flex items-center justify-center">
-          {/* Ambient Glow Canvas */}
           {ambientGlow && (
             <canvas
               ref={ambientCanvasRef}
@@ -426,7 +506,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             />
           )}
 
-          {/* HTML5 Video Element */}
           <video
             ref={videoRef}
             playsInline
@@ -440,7 +519,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             className="w-full h-full object-contain cursor-pointer relative z-10"
           />
 
-          {/* Center Splash Icon on Play/Pause */}
           {centerSplash && (
             <div className="absolute z-20 pointer-events-none p-6 rounded-full bg-black/60 backdrop-blur-md border border-white/10 animate-in fade-in zoom-in-75 duration-300">
               {centerSplash === 'play' ? (
@@ -451,7 +529,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             </div>
           )}
 
-          {/* Buffering Spinner */}
           {isBuffering && (
             <div className="absolute z-20 flex flex-col items-center gap-3 pointer-events-none">
               <div className="w-10 h-10 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
@@ -504,7 +581,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         </div>
       </header>
 
-      {/* Floating Bottom Control Deck */}
+      {/* Floating Bottom Control Bar */}
       {videoSrc && (
         <div
           className={`absolute bottom-0 inset-x-0 z-30 p-6 flex justify-center pointer-events-none transition-all duration-300 ${
@@ -512,7 +589,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           }`}
         >
           <div className="w-full max-w-4xl bg-zinc-950/80 border border-white/10 backdrop-blur-2xl rounded-3xl p-4 shadow-2xl pointer-events-auto space-y-3">
-            {/* Scrubber Progress Bar */}
+            {/* Scrubber Timeline */}
             <div
               className="relative h-2 rounded-full bg-white/10 cursor-pointer group flex items-center"
               onClick={(e) => {
@@ -527,19 +604,19 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               }}
               onMouseLeave={() => setHoverTime(null)}
             >
-              {/* Buffered Bar */}
+              {/* Buffer Bar */}
               <div
                 style={{ width: `${bufferedPercent}%` }}
                 className="absolute inset-y-0 left-0 bg-white/20 rounded-full pointer-events-none"
               />
 
-              {/* Progress Played Bar */}
+              {/* Played Progress Bar */}
               <div
                 style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}
                 className="absolute inset-y-0 left-0 bg-cyan-400 rounded-full pointer-events-none group-hover:bg-cyan-300"
               />
 
-              {/* Scrubber Handle Thumb */}
+              {/* Thumb Scrubber */}
               <div
                 style={{ left: `${(currentTime / (duration || 1)) * 100}%` }}
                 className="absolute w-3.5 h-3.5 bg-white rounded-full -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity shadow-md pointer-events-none"
@@ -556,9 +633,9 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               )}
             </div>
 
-            {/* Transport & Setting Controls */}
+            {/* Transport Row */}
             <div className="flex items-center justify-between">
-              {/* Left: Playback, Frame Skips, Volume, Timer */}
+              {/* Playback Controls & Volume */}
               <div className="flex items-center gap-3">
                 <button
                   onClick={togglePlay}
@@ -615,9 +692,8 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                 </span>
               </div>
 
-              {/* Right: Ambient Glow, Speed, Screenshot, PiP, Fullscreen */}
+              {/* Ambient Glow, Speed, Snapshot, PiP, Fullscreen */}
               <div className="flex items-center gap-2">
-                {/* Ambient Backlight Glow Toggle */}
                 <button
                   onClick={() => setAmbientGlow(!ambientGlow)}
                   className={`p-2 rounded-full transition cursor-pointer ${
@@ -628,7 +704,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                   <Sparkles size={16} />
                 </button>
 
-                {/* Speed Dropdown Selector */}
                 <select
                   value={playbackSpeed}
                   onChange={(e) => {
@@ -645,7 +720,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                   ))}
                 </select>
 
-                {/* Screenshot Button */}
                 <button
                   onClick={captureSnapshot}
                   className="p-2 text-zinc-400 hover:text-white transition cursor-pointer"
@@ -654,7 +728,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                   <Camera size={16} />
                 </button>
 
-                {/* Picture in Picture */}
                 <button
                   onClick={togglePiP}
                   className="p-2 text-zinc-400 hover:text-white transition cursor-pointer"
@@ -663,13 +736,12 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                   <PictureInPicture size={16} />
                 </button>
 
-                {/* Fullscreen Button */}
                 <button
                   onClick={toggleFullscreen}
                   className="p-2 text-zinc-400 hover:text-white transition cursor-pointer"
                   title="Fullscreen (F)"
                 >
-                  {isFullscreen ? <Minimize size={17} /> : <Maximize size={17} />}
+                  {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
                 </button>
               </div>
             </div>
@@ -677,7 +749,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         </div>
       )}
 
-      {/* URL Stream Modal */}
+      {/* Online Stream URL Modal */}
       {isUrlModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-white/10 p-6 rounded-3xl w-full max-w-md shadow-2xl space-y-4">
@@ -732,3 +804,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     </div>
   );
 };
+
+// Aliases for full backwards compatibility
+export { VaultVideoPlayer as ModernVideoPlayer };
+export default VaultVideoPlayer;
