@@ -6,7 +6,7 @@ export interface Track {
   duration: number; // in seconds
   durationText?: string;
   artwork?: string;
-  source: 'local' | 'novaac' | 'spotify' | 'youtube' | 'shazam';
+  source: 'local' | 'local_video' | 'novaac' | 'spotify' | 'youtube' | 'shazam';
   fileName?: string;
   container?: string;
   size?: number;

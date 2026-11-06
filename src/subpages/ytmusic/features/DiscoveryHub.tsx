@@ -9,16 +9,28 @@ export default function DiscoveryHub() {
     { title: "Charts", icon: "ri-bar-chart-line", color: "text-green-500" },
   ];
 
+  const handleSectionClick = (searchTerm: string) => {
+    const input = document.querySelector('input[type="search"]') as HTMLInputElement;
+    if (input) {
+      input.value = searchTerm;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const form = input.closest('form');
+      if (form) form.dispatchEvent(new Event('submit', { bubbles: true }));
+    }
+  };
+
   return (
-    <div className="discovery-hub py-6 space-y-8">
-      <div className="grid grid-cols-2 gap-4">
+    <div className="discovery-hub py-4 px-2 space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {sections.map((section) => (
           <div 
             key={section.title}
-            className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 transition-colors cursor-pointer group"
+            onClick={() => handleSectionClick(section.title === 'Trending' ? 'Trending Music 2026' : section.title === 'New Releases' ? 'New Music 2026' : section.title === 'Moods & Genres' ? 'Chill Lo-Fi Hip Hop' : 'Billboard Top 50')}
+            className="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800 hover:border-cyan-500/40 hover:bg-zinc-800/60 transition-all cursor-pointer group flex flex-col items-center text-center"
           >
-            <i className={`${section.icon} ${section.color} text-3xl mb-3 block group-hover:scale-110 transition-transform`}></i>
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">{section.title}</h3>
+            <i className={`${section.icon} ${section.color} text-2xl mb-2 block group-hover:scale-110 transition-transform`}></i>
+            <h3 className="text-xs font-bold text-white tracking-wide">{section.title}</h3>
+            <span className="text-[10px] text-zinc-500 mt-0.5 group-hover:text-cyan-400">Explore mix</span>
           </div>
         ))}
       </div>

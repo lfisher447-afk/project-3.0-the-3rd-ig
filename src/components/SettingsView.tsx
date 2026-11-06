@@ -65,8 +65,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onWipeVault,
   onOpenDsp,
 }) => {
-  const [activeSection, setActiveSection] = useState<'dsp' | 'security' | 'cloak' | 'theme' | 'storage' | 'vercel' | 'permissions'>('security');
-  const [storageMetrics, setStorageMetrics] = useState({ usageMB: '0.00', quotaMB: 'Unlimited', percent: '0' });
+  const [activeSection, setActiveSection] = useState<'dsp' | 'security' | 'cloak' | 'theme' | 'storage' | 'vercel' | 'permissions' | 'movies'>('security');
+  const [storageMetrics, setStorageMetrics] = useState<any>({ usageMB: '0.00', quotaMB: 'Unlimited', percent: '0' });
   const [swStatus, setSwStatus] = useState<boolean | null>(null);
   const [permState, setPermState] = useState(checkSitePermissionsState());
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -78,7 +78,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const inAboutBlank = isRunningInAboutBlank();
 
   useEffect(() => {
-    getStorageMetrics().then(setStorageMetrics);
+    getStorageMetrics().then((m: any) => setStorageMetrics(m));
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then((regs) => {
         setSwStatus(regs.length > 0);
@@ -138,10 +138,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             eq: {
               ...prev.eq,
               ...(importedSettings.eq || {}),
-              autoGain: importedSettings.eq?.autoGainCompensation ?? importedSettings.eq?.autoGain ?? prev.eq?.autoGain ?? true,
-              autoGainCompensation: importedSettings.eq?.autoGainCompensation ?? importedSettings.eq?.autoGain ?? true,
-              preampGain: importedSettings.eq?.preAmpGain ?? importedSettings.eq?.preampGain ?? prev.eq?.preampGain ?? 0,
-              preAmpGain: importedSettings.eq?.preAmpGain ?? importedSettings.eq?.preampGain ?? 0,
+              autoGainCompensation: importedSettings.eq?.autoGainCompensation ?? (importedSettings.eq as any)?.autoGain ?? true,
+              preAmpGain: importedSettings.eq?.preAmpGain ?? (importedSettings.eq as any)?.preampGain ?? 0,
             },
             spatial: {
               ...prev.spatial,
@@ -1032,7 +1030,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </p>
                 </div>
                 <button
-                  onClick={launchBlobCloak}
+                  onClick={() => launchBlobCloak()}
                   className="mt-5 w-full py-2.5 bg-[#0e2d26] hover:bg-[#133e34] text-[#34d399] border border-[#34d399]/30 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors"
                 >
                   <ExternalLink size={14} />
@@ -1322,8 +1320,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Mode Selectors */}
             <div className="mb-5">
               <div className="text-xs font-bold text-white mb-2">Acoustic Mode Preset</div>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {(['off', 'stereo', 'spatial', 'club', 'hall', 'stadium'] as const).map((m) => (
+              <div className="grid grid-cols-3 sm:grid-cols-7 gap-2">
+                {(['off', 'studio', 'wide', 'immersive', 'cinema', 'hall', 'club'] as const).map((m) => (
                   <button
                     key={m}
                     onClick={() =>

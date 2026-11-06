@@ -23,6 +23,7 @@ import {
   Share2,
   Database,
   Film,
+  Layers,
 } from 'lucide-react';
 import { Track, Playlist } from '../../types';
 import { VaultVideoPlayer } from './VaultVideoPlayer';

@@ -190,7 +190,7 @@ export const SpotifyPlayerView: React.FC<SpotifyPlayerViewProps> = ({
               <div className="relative group my-auto">
                 <div className="w-44 h-44 rounded-2xl overflow-hidden shadow-2xl border border-emerald-500/30">
                   <img
-                    src={activeCollection.coverArt || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400'}
+                    src={activeCollection.artwork || (activeCollection as any).coverArt || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400'}
                     alt={activeCollection.title}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   />

@@ -1,13 +1,10 @@
 import { Innertube, YTNodes, Parser, type Helpers } from "youtubei.js";
 
 // Handle/suppress unrecognized YT renderer warnings safely
+// Handle/suppress unrecognized YT renderer warnings safely without crashing
 Parser.setParserErrorHandler((error: any) => {
-  if (
-    error?.classname === "OfficialCardView" ||
-    error?.message?.includes("OfficialCardView")
-  ) {
-    return;
-  }
+  // Silently ignore newly introduced YouTube view nodes (e.g. OfficialCardView, HorizontalShelfView, CtaCarouselItemView)
+  return;
 });
 
 export function shuffle<T>(array: T[]): T[] {

@@ -129,9 +129,9 @@ const storeInit = {
 
 export const [store, setStore, useAppStore] = createStore(storeInit);
 
-export function t(key: TranslationKeys, value: string = ""): string {
+export function t(key: TranslationKeys | string, value: string = ""): string {
   const translations = store.translations;
-  const translatedString = translations[key] || (key as string);
+  const translatedString = (translations as any)[key] || (key as string);
   return value ? translatedString.replace("$", value) : translatedString;
 }
 
@@ -315,14 +315,24 @@ export async function getSearchResults(isForm?: boolean) {
     const filter = config.searchFilter || "all";
     const res = await fetch(`/api/ytmusic/search?q=${encodeURIComponent(query)}&f=${filter}&page=${page}`);
     const data = await res.json();
+    const cleanList = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.results)
+      ? data.results
+      : Array.isArray(data?.list)
+      ? data.list
+      : [];
     
     if (page === 1) {
-      setSearchStore("results", data);
+      setSearchStore("results", cleanList);
     } else {
-      setSearchStore("results", prev => [...prev, ...data]);
+      setSearchStore("results", prev => [...(Array.isArray(prev) ? prev : []), ...cleanList]);
     }
   } catch (e) {
     console.error("Failed to fetch search results", e);
+    if (page === 1) {
+      setSearchStore("results", []);
+    }
   } finally {
     setSearchStore("isLoading", false);
   }
@@ -341,10 +351,16 @@ export async function getSearchSuggestions(query: string) {
       signal: controller.signal
     });
     const data = await res.json();
-    setSearchStore("suggestions", "data", data);
+    const cleanSuggestions = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.suggestions)
+      ? data.suggestions
+      : [];
+    setSearchStore("suggestions", "data", cleanSuggestions);
   } catch (e: any) {
     if (e.name !== "AbortError") {
       console.error("Failed to fetch suggestions", e);
+      setSearchStore("suggestions", "data", []);
     }
   }
 }

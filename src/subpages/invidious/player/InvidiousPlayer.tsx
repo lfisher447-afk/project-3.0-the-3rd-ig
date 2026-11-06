@@ -857,9 +857,9 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
             <div className="flex flex-wrap items-center gap-3 text-xs text-[#789d9a]">
               <span className="font-semibold text-white">{metadata.author}</span>
               <span>•</span>
-              <span className="font-mono">{metadata.viewsFormatted || 'Live HD Stream'}</span>
+              <span className="font-mono">{metadata.viewCountFormatted || 'Live HD Stream'}</span>
               <span>•</span>
-              <span className="font-mono">{metadata.publishedText || 'YouTube Video'}</span>
+              <span className="font-mono">{metadata.durationFormatted || 'YouTube Video'}</span>
               <span>•</span>
               <span className="font-mono text-[#48e4ff]">
                 Node: {currentServerInfo.flag} {currentServerInfo.name}
@@ -924,7 +924,7 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
             }`}
           >
             <MessageSquare size={14} />
-            <span>Comments ({comments.length || metadata.commentCount || 0})</span>
+            <span>Comments ({comments.length || (metadata as any).commentCount || 0})</span>
           </button>
 
           <button
@@ -1011,7 +1011,7 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
                 <div className="relative w-28 h-18 rounded-xl overflow-hidden bg-black shrink-0">
                   <img src={rel.thumbnail} alt={rel.title} className="w-full h-full object-cover group-hover:scale-105 transition" />
                   <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/80 text-[9px] font-mono text-white">
-                    {rel.durationText || '3:30'}
+                    {rel.duration || '3:30'}
                   </span>
                 </div>
                 <div className="min-w-0 flex-1 flex flex-col justify-between">
@@ -1019,9 +1019,9 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
                     <h4 className="font-bold text-xs text-white line-clamp-2 leading-snug group-hover:text-[#f43f5e] transition-colors">
                       {rel.title}
                     </h4>
-                    <p className="text-[11px] text-[#789d9a] truncate mt-0.5">{rel.artist}</p>
+                    <p className="text-[11px] text-[#789d9a] truncate mt-0.5">{rel.author}</p>
                   </div>
-                  <span className="text-[10px] font-mono text-zinc-500">{rel.views || 'Play Next'}</span>
+                  <span className="text-[10px] font-mono text-zinc-500">Play Next</span>
                 </div>
               </div>
             ))}
@@ -1042,7 +1042,7 @@ export const InvidiousPlayer: React.FC<InvidiousPlayerProps> = ({
               </div>
             ) : (
               comments.map((c, i) => (
-                <div key={c.commentId ? `comment_${c.commentId}_${i}` : `comment_${i}`} className="p-3.5 rounded-2xl bg-[#091b20] border border-[#163640] space-y-1.5">
+                <div key={c.id ? `comment_${c.id}_${i}` : `comment_${i}`} className="p-3.5 rounded-2xl bg-[#091b20] border border-[#163640] space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-bold text-white">{c.author}</span>
                     <span className="text-[10px] font-mono text-zinc-500">{c.publishedText}</span>

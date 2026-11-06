@@ -1,108 +1,124 @@
-import React, { useEffect, useRef } from "react";
+import React, { useRef } from "react";
 import {
   usePlayerStore,
   playPrev,
   playNext,
-  useQueueStore,
   setPlayerStore,
-  t,
 } from "../store";
 import { convertSStoHHMMSS } from "../utils";
+import { audioEngine } from "../../../lib/audioEngine";
+import {
+  Music2,
+  SkipBack,
+  SkipForward,
+  Play,
+  Pause,
+  Repeat,
+  Volume2,
+} from "lucide-react";
 
 export default function Controls(props: {
   showLyrics: boolean;
   setShowLyrics: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
   const playerStore = usePlayerStore();
-  const queueStore = useQueueStore();
-  const sliderRef = useRef<HTMLInputElement>(null);
-
-  const progress = playerStore.fullDuration > 0 ? (playerStore.currentTime / playerStore.fullDuration) * 100 : 0;
+  const isPlaying = playerStore.playbackState === "playing";
 
   return (
-    <div className="w-full max-w-[400px] mt-8 space-y-6">
-      <div className="space-y-2">
+    <div className="w-full max-w-[400px] mt-6 space-y-5">
+      <div className="space-y-1.5">
         <input
           type="range"
           min="0"
           max={playerStore.fullDuration || 100}
-          value={playerStore.currentTime}
+          value={playerStore.currentTime || 0}
           onChange={(e) => {
-            playerStore.audio.currentTime = parseInt(e.target.value);
+            const time = parseInt(e.target.value);
+            audioEngine.seek(time);
+            setPlayerStore("currentTime", time);
           }}
           className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-[#48e4ff]"
         />
         <div className="flex justify-between text-[10px] font-mono text-zinc-500 uppercase tracking-widest">
-          <span>{convertSStoHHMMSS(playerStore.currentTime)}</span>
-          <span>{convertSStoHHMMSS(playerStore.fullDuration)}</span>
+          <span>{convertSStoHHMMSS(playerStore.currentTime || 0)}</span>
+          <span>{convertSStoHHMMSS(playerStore.fullDuration || 0)}</span>
         </div>
       </div>
 
       <div className="flex items-center justify-between">
         <button 
           onClick={() => props.setShowLyrics(!props.showLyrics)}
-          className={`text-xl transition-colors ${props.showLyrics ? "text-[#48e4ff]" : "text-zinc-500 hover:text-white"}`}
-          title="Lyrics"
+          className={`p-2 rounded-xl transition-colors cursor-pointer ${
+            props.showLyrics ? "text-[#48e4ff] bg-cyan-950/60" : "text-zinc-500 hover:text-white"
+          }`}
+          title="Toggle Lyrics"
         >
-          <i className="ri-music-2-line"></i>
+          <Music2 className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-6">
           <button 
             onClick={playPrev}
-            className="text-2xl text-white hover:text-[#48e4ff] transition-colors"
+            className="p-2 text-white hover:text-[#48e4ff] transition-colors cursor-pointer"
+            title="Previous Track"
           >
-            <i className="ri-skip-back-fill"></i>
+            <SkipBack className="w-6 h-6 fill-current" />
           </button>
 
           <button 
             onClick={() => {
-              if (playerStore.playbackState === "playing") {
-                playerStore.audio.pause();
+              if (isPlaying) {
+                audioEngine.pause();
+                setPlayerStore("playbackState", "paused");
               } else {
-                playerStore.audio.play();
+                audioEngine.play().catch(() => {});
+                setPlayerStore("playbackState", "playing");
               }
             }}
-            className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform"
+            className="w-14 h-14 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform shadow-lg shadow-cyan-500/20 cursor-pointer"
+            title={isPlaying ? "Pause" : "Play"}
           >
-            <i className={`text-4xl ${playerStore.playbackState === "playing" ? "ri-pause-fill" : "ri-play-fill"}`}></i>
+            {isPlaying ? <Pause className="w-7 h-7 fill-black" /> : <Play className="w-7 h-7 fill-black ml-0.5" />}
           </button>
 
           <button 
             onClick={playNext}
-            className="text-2xl text-white hover:text-[#48e4ff] transition-colors"
+            className="p-2 text-white hover:text-[#48e4ff] transition-colors cursor-pointer"
+            title="Next Track"
           >
-            <i className="ri-skip-forward-fill"></i>
+            <SkipForward className="w-6 h-6 fill-current" />
           </button>
         </div>
 
         <button 
           onClick={() => {
             const next = !playerStore.loop;
-            playerStore.audio.loop = next;
+            audioEngine.setLooping(next);
             setPlayerStore("loop", next);
           }}
-          className={`text-xl transition-colors ${playerStore.loop ? "text-[#48e4ff]" : "text-zinc-500 hover:text-white"}`}
-          title="Loop"
+          className={`p-2 rounded-xl transition-colors cursor-pointer ${
+            playerStore.loop ? "text-[#48e4ff] bg-cyan-950/60" : "text-zinc-500 hover:text-white"
+          }`}
+          title="Loop Track"
         >
-          <i className="ri-repeat-line"></i>
+          <Repeat className="w-5 h-5" />
         </button>
       </div>
 
-      <div className="flex items-center gap-4 bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800">
-        <i className="ri-volume-up-line text-zinc-500"></i>
+      <div className="flex items-center gap-3 bg-zinc-900/60 p-3 rounded-2xl border border-zinc-800/80">
+        <Volume2 className="w-4 h-4 text-zinc-400 shrink-0" />
         <input 
           type="range"
           min="0"
           max="1"
           step="0.01"
-          value={playerStore.volume}
+          value={playerStore.volume !== undefined ? playerStore.volume : 1}
           onChange={(e) => {
             const val = parseFloat(e.target.value);
-            playerStore.audio.volume = val;
+            audioEngine.setVolume(val);
             setPlayerStore("volume", val);
           }}
-          className="flex-grow h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-white"
+          className="flex-grow h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-[#48e4ff]"
         />
       </div>
     </div>

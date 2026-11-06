@@ -48,6 +48,26 @@ function persistVaultsToDisk() {
   }
 }
 
+function normalizeVaultCode(raw: string): string {
+  if (!raw) return '';
+  return raw.trim().toUpperCase().replace(/[\s_]/g, '-');
+}
+
+export function findVaultByCode(code: string): CloudVaultData | undefined {
+  if (!code) return undefined;
+  const normalized = normalizeVaultCode(code);
+  const direct = vaults.get(normalized);
+  if (direct) return direct;
+
+  const stripped = normalized.replace(/[^A-Z0-9]/g, '');
+  for (const [k, v] of vaults.entries()) {
+    if (k.replace(/[^A-Z0-9]/g, '') === stripped) {
+      return v;
+    }
+  }
+  return undefined;
+}
+
 function generateVaultCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let segment1 = '';
@@ -110,7 +130,7 @@ cloudSyncRouter.post('/vault/push', (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Vault code is required' });
     }
 
-    const vault = vaults.get(code);
+    const vault = findVaultByCode(code);
     const now = Date.now();
 
     if (!vault) {
@@ -201,7 +221,7 @@ cloudSyncRouter.post('/vault/push', (req: Request, res: Response) => {
 
     return res.json({
       success: true,
-      code,
+      code: vault.code,
       version: vault.version,
       updatedAt: vault.updatedAt,
       trackCount: vault.tracks.length,
@@ -221,7 +241,7 @@ cloudSyncRouter.get('/vault/pull', (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Vault code is required' });
     }
 
-    const vault = vaults.get(code);
+    const vault = findVaultByCode(code);
     if (!vault) {
       return res.status(404).json({ error: 'Cloud Vault not found. Check your sync code.' });
     }
@@ -251,7 +271,7 @@ cloudSyncRouter.get('/vault/status', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Vault code is required' });
   }
 
-  const vault = vaults.get(code);
+  const vault = findVaultByCode(code);
   if (!vault) {
     return res.json({
       exists: false,

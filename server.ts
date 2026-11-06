@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { Readable } from "stream";
-import { Innertube, UniversalCache, Platform } from "youtubei.js";
+import { Innertube, UniversalCache, Platform, Parser } from "youtubei.js";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { handleProxyRequest, turboCache } from "./server/proxyEngine.js";
@@ -12,6 +12,12 @@ import { securityHeadersMiddleware, crawlerFirewallMiddleware, securityRouter } 
 import { cloudSyncRouter } from "./server/cloudSyncServer.js";
 
 dotenv.config();
+
+// @ts-ignore
+import worker from "./api/worker.js";
+
+// Suppress unrecognized YouTube parser renderer view errors
+Parser.setParserErrorHandler(() => {});
 
 // Custom JavaScript evaluator required for YouTube.js to decipher URLs and download streams
 Platform.shim.eval = async (data: any, env: Record<string, any>) => {
@@ -567,6 +573,119 @@ async function startServer() {
     const results = await searchYouTube(query, page);
     res.json({ results });
   });
+
+  // ---------------------------------------------------------------------------
+  // Dedicated YouTube Music Subpage Endpoints (/api/ytmusic/*) - Delegated via worker.js
+  // ---------------------------------------------------------------------------
+  app.all("/api/ytmusic/:action", async (req, res) => {
+    const action = req.params.action;
+    const queryParams = new URLSearchParams(req.query as any).toString();
+    const targetUrl = `https://localhost/${action}${queryParams ? `?${queryParams}` : ""}`;
+
+    try {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (value && typeof value === "string") headers.set(key, value);
+      }
+
+      let body: Uint8Array | undefined;
+      if (req.method !== "GET" && req.method !== "HEAD" && req.body) {
+        const str = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+        body = new TextEncoder().encode(str);
+      }
+
+      const webReq = new Request(targetUrl, {
+        method: req.method,
+        headers,
+        body: body ? (body as any) : undefined,
+        // @ts-ignore
+        duplex: "half",
+      });
+
+      const response = await worker.fetch(
+        webReq,
+        {} as any,
+        {
+          waitUntil: () => {},
+          passThroughOnException: () => {},
+        } as any
+      );
+
+      if (response) {
+        const arrayBuffer = await response.arrayBuffer();
+        const text = Buffer.from(arrayBuffer).toString("utf-8");
+
+        // Check for Innertube view parser mismatches
+        if (
+          !response.ok ||
+          text.includes("OfficialCardView") ||
+          text.includes("HorizontalShelfView") ||
+          text.includes("CtaCarouselItemView") ||
+          text.includes("ParsingError") ||
+          text.includes("InnertubeError")
+        ) {
+          console.warn(`[Worker /api/ytmusic/${action}] Innertube parser exception, serving scraper fallback...`);
+          if (action === "search") {
+            const q = ((req.query.q as string) || "").trim();
+            if (q) {
+              const rawResults = await searchYouTube(q, 1);
+              return res.json(
+                rawResults.map((v) => ({
+                  id: v.id,
+                  videoId: v.id,
+                  title: v.title,
+                  author: v.artist,
+                  artist: v.artist,
+                  duration: v.durationText || "3:30",
+                  durationSeconds: v.duration || 210,
+                  img: v.thumbnail || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+                  thumbnail: v.thumbnail || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+                  subtext: v.artist,
+                  type: "song",
+                  streamUrl: `/api/audio/stream?id=${v.id}`,
+                }))
+              );
+            }
+          }
+        } else {
+          res.status(response.status);
+          response.headers.forEach((value: string, key: string) => {
+            res.setHeader(key, value);
+          });
+          return res.send(Buffer.from(arrayBuffer));
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[Worker Route /api/ytmusic/${action} Exception]:`, e?.message);
+    }
+
+    // Secondary Scraper Fallback
+    if (action === "search") {
+      const q = ((req.query.q as string) || "").trim();
+      if (q) {
+        const rawResults = await searchYouTube(q, 1);
+        return res.json(
+          rawResults.map((v) => ({
+            id: v.id,
+            videoId: v.id,
+            title: v.title,
+            author: v.artist,
+            artist: v.artist,
+            duration: v.durationText || "3:30",
+            durationSeconds: v.duration || 210,
+            img: v.thumbnail || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+            thumbnail: v.thumbnail || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+            subtext: v.artist,
+            type: "song",
+            streamUrl: `/api/audio/stream?id=${v.id}`,
+          }))
+        );
+      }
+    }
+
+    return res.json(action === "featured" ? { list: [], title: "Featured" } : []);
+  });
+
 
   // Real YouTube Channel Profile Inspector
   app.get("/api/innertube/channel", async (req, res) => {
@@ -1241,17 +1360,7 @@ async function startServer() {
     res.setHeader("Access-Control-Allow-Headers", "*");
     res.setHeader("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, Content-Type");
 
-    const CURATED_AUDIO_MAP: Record<string, string> = {
-      "kJQP7kiw5Fk": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-      "OPf0YbXqDm0": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-      "fJ9rUzIMcZQ": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-      "JGwWNGJdvx8": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-    };
-
-    if (CURATED_AUDIO_MAP[videoId]) {
-      const success = await pipeMediaStream(CURATED_AUDIO_MAP[videoId], req, res, "audio/mpeg", true);
-      if (success) return;
-    }
+    // Removed fake/mock soundhelix audio map and fallbacks.
 
     try {
       // 1. Try Innertube direct download WebStream
@@ -1360,10 +1469,50 @@ async function startServer() {
         }
       }
 
-      // 4. High quality emergency audio backup stream to avoid player crash
-      console.info(`[Audio Stream Mesh] Routing high-fidelity resilient stream for ${videoId}`);
-      const fallbackAudio = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
-      await pipeMediaStream(fallbackAudio, req, res, "audio/mpeg", true);
+      // 4. Cobalt API nodes for direct audio extraction
+      const cobaltNodes = [
+        "https://api.cobalt.tools",
+        "https://cobalt-api.kwiatekm.tokyo",
+        "https://co.wuk.sh",
+      ];
+      for (const cNode of cobaltNodes) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 3000);
+          const cRes = await fetch(`${cNode}/api/json`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              "User-Agent": "Mozilla/5.0 SpotuiClient/3.0",
+            },
+            body: JSON.stringify({
+              url: `https://www.youtube.com/watch?v=${videoId}`,
+              downloadMode: "audio",
+              audioFormat: "mp3",
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          if (cRes.ok) {
+            const cData = await cRes.json();
+            if (cData.url) {
+              const success = await pipeMediaStream(cData.url, req, res, "audio/mpeg", true);
+              if (success) return;
+            }
+          }
+        } catch {}
+      }
+
+      // 5. No soundhelix/fake audio fallback. Return 503 error if stream unavailable
+      console.warn(`[Audio Stream] All streaming mirrors exhausted for videoId: ${videoId}`);
+      if (!res.headersSent) {
+        res.status(503).json({
+          error: "AUDIO_STREAM_UNAVAILABLE",
+          message: "Unable to retrieve live audio stream from upstream nodes for this video.",
+          videoId,
+        });
+      }
     } catch (e: any) {
       if (!res.headersSent) {
         res.status(500).json({ error: "Stream error: " + e.message });

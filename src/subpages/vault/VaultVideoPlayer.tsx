@@ -8,6 +8,7 @@ import {
   RotateCw,
   Volume2,
   VolumeX,
+  Volume1,
   Maximize2,
   Minimize2,
   Sliders,
@@ -33,6 +34,18 @@ import {
   Shield,
   RefreshCw,
   Cpu,
+  Scissors,
+  HelpCircle,
+  Eye,
+  SlidersHorizontal,
+  Plus,
+  Trash2,
+  Clock,
+  Gauge,
+  Sun,
+  Contrast,
+  Palette,
+  Compass,
 } from 'lucide-react';
 import { AppSettings } from '../../types';
 
@@ -118,7 +131,7 @@ export const PLAYBACK_ENGINES: EngineInfo[] = [
     id: 'invidious_proxy',
     name: 'Invidious / Piped Multi-Node Streamer',
     badge: 'Stealth Relay',
-    description: 'Extracts and streams video streams through 12 unblocked privacy proxy nodes with zero tracking.',
+    description: 'Extracts and streams video streams through privacy proxy nodes with zero tracking.',
     flag: '🛡️',
     supportedFormats: ['YouTube ID', 'Invidious API', 'Piped'],
   },
@@ -174,78 +187,71 @@ export const SAMPLE_STREAMS: SampleStream[] = [
   },
   {
     id: 'sintel_dash',
-    title: 'Sintel: The Dragon Hunt (DASH Stream)',
+    title: 'Sintel: The Dragon Hunt (HLS/DASH)',
     category: 'Fantasy Adventure',
     url: 'https://bitmovin-a.akamaihd.net/content/sintel/hls/playlist.m3u8',
-    engine: 'dash_shaka',
-    resolution: '1080p Cinema',
+    engine: 'hls_js',
+    resolution: '1080p HD',
     duration: '14:48',
-    thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&q=80',
+    thumbnail: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
   },
   {
     id: 'elephants_dream',
-    title: "Elephant's Dream (Open Source Film)",
-    category: 'Surreal Cyberpunk',
+    title: "Elephant's Dream (Sci-Fi Surreal)",
+    category: 'Open Movie Project',
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    engine: 'canvas_shader',
-    resolution: '1080p HD',
+    engine: 'html5_native',
+    resolution: '1080p Full HD',
     duration: '10:53',
-    thumbnail: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=500&q=80',
-  },
-  {
-    id: 'cosmos_stream',
-    title: 'Cosmos: Galactic Flight WebM',
-    category: 'Space Exploration',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    engine: 'webaudio_dsp',
-    resolution: '1080p Studio',
-    duration: '0:15',
     thumbnail: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=500&q=80',
   },
   {
-    id: 'synthwave_reel',
-    title: 'Neon Cyberpunk Synthwave Reel',
-    category: 'Visual Synthesizer',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    engine: 'mse_streamer',
-    resolution: '1080p 60FPS',
+    id: 'cosmic_laundromat',
+    title: 'Cosmic Laundromat (Sci-Fi Comedy)',
+    category: 'Blender Institute',
+    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    engine: 'html5_native',
+    resolution: '1080p HD',
     duration: '0:15',
-    thumbnail: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80',
+    thumbnail: 'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?w=500&q=80',
   },
 ];
 
-export type VideoFilterShader =
-  | 'none'
-  | 'crt_scanline'
-  | 'cyberpunk_neon'
-  | 'vintage_35mm'
-  | 'hdr_boost'
-  | 'matrix_green'
-  | 'night_vision'
-  | 'black_white'
-  | 'sepia'
-  | 'invert';
+export interface ChapterMarker {
+  id: string;
+  time: number;
+  label: string;
+}
 
-interface VaultVideoPlayerProps {
+export interface VaultVideoPlayerProps {
   onClose: () => void;
-  settings?: AppSettings;
   onOpenDsp?: () => void;
   initialUrl?: string;
   initialTitle?: string;
+  settings?: AppSettings;
 }
 
-export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onOpenDsp, initialUrl, initialTitle }) => {
-  // Active Video URL & Engine Selection
-  const [streamUrl, setStreamUrl] = useState<string>(initialUrl || 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');
-  const [activeEngine, setActiveEngine] = useState<PlaybackEngine>(
-    initialUrl?.endsWith('.m3u8') ? 'hls_js' : 'html5_native'
+export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({
+  onClose,
+  initialUrl,
+  initialTitle,
+  settings,
+}) => {
+  // Core Stream & Engine State
+  const [streamUrl, setStreamUrl] = useState<string>(
+    initialUrl || 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
   );
-  const [videoTitle, setVideoTitle] = useState<string>(initialTitle || (initialUrl ? 'Vault Local Video' : 'Big Buck Bunny (1080p HLS)'));
+  const [activeEngine, setActiveEngine] = useState<PlaybackEngine>(
+    initialUrl?.includes('.m3u8') ? 'hls_js' : 'html5_native'
+  );
+  const [videoTitle, setVideoTitle] = useState<string>(
+    initialTitle || (initialUrl ? 'Vault Local Video' : 'Big Buck Bunny (1080p HLS)')
+  );
   const [customInputUrl, setCustomInputUrl] = useState<string>('');
 
   // Player Elements
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ambientCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const subtitleInputRef = useRef<HTMLInputElement | null>(null);
@@ -256,11 +262,12 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [volume, setVolume] = useState<number>(0.9);
+  const [audioBoost, setAudioBoost] = useState<number>(1.0); // 1.0 = 100%, 3.0 = 300%
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '4:3' | '21:9' | 'fit' | 'fill'>('16:9');
-  const [activeFilter, setActiveFilter] = useState<VideoFilterShader>('none');
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isTheaterMode, setIsTheaterMode] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(true);
   const [isBuffering, setIsBuffering] = useState<boolean>(false);
   const [loopEnabled, setLoopEnabled] = useState<boolean>(false);
@@ -269,82 +276,110 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
   const [loopPointA, setLoopPointA] = useState<number | null>(null);
   const [loopPointB, setLoopPointB] = useState<number | null>(null);
 
-  // Metrics HUD
-  const [videoBitrate, setVideoBitrate] = useState<string>('Auto (HLS.js Adaptive)');
+  // Custom Video Shaders / Color Grading
+  const [brightness, setBrightness] = useState<number>(100); // 50 - 200%
+  const [contrast, setContrast] = useState<number>(100); // 50 - 200%
+  const [saturation, setSaturation] = useState<number>(100); // 0 - 300%
+  const [sepia, setSepia] = useState<number>(0); // 0 - 100%
+  const [invert, setInvert] = useState<number>(0); // 0 - 100%
+  const [hueRotate, setHueRotate] = useState<number>(0); // 0 - 360 deg
+  const [blurPx, setBlurPx] = useState<number>(0); // 0 - 10px
+  const [crtMode, setCrtMode] = useState<boolean>(false);
+  const [filmGrain, setFilmGrain] = useState<boolean>(false);
+  const [ambientGlow, setAmbientGlow] = useState<boolean>(true);
+
+  // Subtitles & Markers
+  const [subtitlesText, setSubtitlesText] = useState<string | null>(null);
+  const [subtitleOffsetSec, setSubtitleOffsetSec] = useState<number>(0);
+  const [subtitleSize, setSubtitleSize] = useState<'sm' | 'md' | 'lg'>('md');
+  const [chapterMarkers, setChapterMarkers] = useState<ChapterMarker[]>([]);
+  const [newMarkerLabel, setNewMarkerLabel] = useState<string>('');
+
+  // HUD & Modals
+  const [videoBitrate, setVideoBitrate] = useState<string>('Auto (Adaptive)');
   const [bufferLength, setBufferLength] = useState<number>(0);
   const [droppedFrames, setDroppedFrames] = useState<number>(0);
-  const [fps, setFps] = useState<number>(60);
   const [showMetricsHud, setShowMetricsHud] = useState<boolean>(false);
-
-  // Subtitles
-  const [subtitlesText, setSubtitlesText] = useState<string | null>(null);
-  const [subtitlesFileName, setSubtitlesFileName] = useState<string | null>(null);
-
-  // Saved Bookmarks in Session/Vault
-  const [savedBookmarks, setSavedBookmarks] = useState<Array<{ title: string; url: string; engine: PlaybackEngine }>>(() => {
-    try {
-      const stored = localStorage.getItem('vault_video_bookmarks');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
+  const [showFiltersModal, setShowFiltersModal] = useState<boolean>(false);
   const [isBookmarked, setIsBookmarked] = useState<boolean>(false);
+  const [snapshotNotice, setSnapshotNotice] = useState<string | null>(null);
 
-  // Canvas Post-Processing Loop
+  // Web Audio Booster Node
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+
+  const initAudioBooster = () => {
+    if (!videoRef.current || audioCtxRef.current) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const gainNode = ctx.createGain();
+      gainNode.gain.setValueAtTime(audioBoost, ctx.currentTime);
+      const source = ctx.createMediaElementSource(videoRef.current);
+      source.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      audioCtxRef.current = ctx;
+      gainNodeRef.current = gainNode;
+      sourceNodeRef.current = source;
+    } catch (e) {
+      // Browser may restrict multiple source creation on same element
+    }
+  };
+
   useEffect(() => {
-    if (activeFilter === 'none') return;
-    let animationFrameId: number;
+    if (gainNodeRef.current && audioCtxRef.current) {
+      gainNodeRef.current.gain.setValueAtTime(audioBoost, audioCtxRef.current.currentTime);
+    }
+  }, [audioBoost]);
 
-    const renderCanvas = () => {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (video && canvas && !video.paused && !video.ended) {
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          canvas.width = video.videoWidth || 1280;
-          canvas.height = video.videoHeight || 720;
+  // Compute CSS filter string
+  const computedFilterStyle = useMemo(() => {
+    const filters: string[] = [];
+    if (brightness !== 100) filters.push(`brightness(${brightness}%)`);
+    if (contrast !== 100) filters.push(`contrast(${contrast}%)`);
+    if (saturation !== 100) filters.push(`saturate(${saturation}%)`);
+    if (sepia > 0) filters.push(`sepia(${sepia}%)`);
+    if (invert > 0) filters.push(`invert(${invert}%)`);
+    if (hueRotate > 0) filters.push(`hue-rotate(${hueRotate}deg)`);
+    if (blurPx > 0) filters.push(`blur(${blurPx}px)`);
+    return filters.join(' ') || 'none';
+  }, [brightness, contrast, saturation, sepia, invert, hueRotate, blurPx]);
+
+  // Ambient Backlight Canvas Loop
+  useEffect(() => {
+    if (!ambientGlow) return;
+    let animId: number;
+    const canvas = ambientCanvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+
+    const drawAmbient = () => {
+      try {
+        if (!video.paused && !video.ended && video.readyState >= 2) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-          // Apply Shader FX
-          if (activeFilter === 'crt_scanline') {
-            ctx.fillStyle = 'rgba(18, 16, 16, 0.2)';
-            for (let y = 0; y < canvas.height; y += 4) {
-              ctx.fillRect(0, y, canvas.width, 1.5);
-            }
-          } else if (activeFilter === 'cyberpunk_neon') {
-            ctx.fillStyle = 'rgba(72, 228, 255, 0.08)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-          } else if (activeFilter === 'matrix_green') {
-            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const data = imgData.data;
-            for (let i = 0; i < data.length; i += 4) {
-              const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-              data[i] = 0;
-              data[i + 1] = avg * 1.2;
-              data[i + 2] = avg * 0.2;
-            }
-            ctx.putImageData(imgData, 0, 0);
-          }
         }
-      }
-      animationFrameId = requestAnimationFrame(renderCanvas);
+      } catch {}
+      animId = requestAnimationFrame(drawAmbient);
     };
 
-    renderCanvas();
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [activeFilter, isPlaying]);
+    animId = requestAnimationFrame(drawAmbient);
+    return () => cancelAnimationFrame(animId);
+  }, [ambientGlow]);
 
-  // Load Stream via Selected Engine
+  // Stream Loader
   const loadStream = useCallback((url: string, engine: PlaybackEngine, title?: string) => {
+    if (!url) return;
     setStreamUrl(url);
     setActiveEngine(engine);
     if (title) setVideoTitle(title);
     setIsBuffering(true);
-    setLoopPointA(null);
-    setLoopPointB(null);
 
-    // Destroy previous HLS instance if any
     if (hlsInstanceRef.current) {
       hlsInstanceRef.current.destroy();
       hlsInstanceRef.current = null;
@@ -369,9 +404,9 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
         });
         hls.on(Hls.Events.ERROR, (_, errData) => {
           if (errData.fatal) {
-            console.warn('[HLS.js Fatal Error, switching to native]:', errData.type);
             hls.destroy();
             video.src = url;
+            video.play().catch(() => {});
           }
         });
         hlsInstanceRef.current = hls;
@@ -380,7 +415,6 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
         video.play().catch(() => {});
       }
     } else {
-      // Native HTML5, DASH, MSE, Canvas, WebAudio, etc.
       video.src = url;
       video.load();
       video.play().then(() => {
@@ -393,7 +427,6 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
     }
   }, []);
 
-  // Initialize on mount
   useEffect(() => {
     loadStream(streamUrl, activeEngine, videoTitle);
     return () => {
@@ -403,7 +436,7 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
     };
   }, []);
 
-  // Update Buffer & Metric HUD
+  // Buffer and Frame Drop HUD
   useEffect(() => {
     const interval = setInterval(() => {
       const video = videoRef.current;
@@ -421,7 +454,7 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
     return () => clearInterval(interval);
   }, []);
 
-  // A-B Repeat Loop Check
+  // Time Update and A-B Loop Enforcer
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -436,104 +469,222 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
+    initAudioBooster();
     if (isPlaying) {
       video.pause();
       setIsPlaying(false);
     } else {
-      video.play().then(() => setIsPlaying(true));
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
     }
   };
 
   const handleSeek = (newTime: number) => {
     const video = videoRef.current;
     if (!video) return;
-    video.currentTime = newTime;
-    setCurrentTime(newTime);
+    video.currentTime = Math.max(0, Math.min(duration, newTime));
+    setCurrentTime(video.currentTime);
   };
 
-  const handleSpeedChange = (speed: number) => {
+  const handleStepFrame = (frames: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    setIsPlaying(false);
+    const frameDuration = 1 / 30; // standard 30fps
+    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + frames * frameDuration));
+    setCurrentTime(video.currentTime);
+  };
+
+  const handleSetSpeed = (speed: number) => {
     setPlaybackSpeed(speed);
     if (videoRef.current) {
       videoRef.current.playbackRate = speed;
     }
   };
 
-  // Frame Stepper: single frame forward or backward
-  const stepFrame = (frames: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.pause();
-    setIsPlaying(false);
-    const frameDuration = 1 / fps;
-    video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + frames * frameDuration));
+  const handleToggleMute = () => {
+    if (videoRef.current) {
+      videoRef.current.muted = !isMuted;
+      setIsMuted(!isMuted);
+    }
   };
 
-  // Screenshot Snapshot
+  const handleVolumeChange = (v: number) => {
+    setVolume(v);
+    setIsMuted(v === 0);
+    if (videoRef.current) {
+      videoRef.current.volume = v;
+      videoRef.current.muted = v === 0;
+    }
+  };
+
+  // High-Res Snapshot Capture
   const captureScreenshot = () => {
     const video = videoRef.current;
     if (!video) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1920;
-    canvas.height = video.videoHeight || 1080;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = `spotui-vault-frame-${Math.floor(video.currentTime)}s.png`;
-      a.click();
+
+    try {
+      const snapCanvas = document.createElement('canvas');
+      snapCanvas.width = video.videoWidth || 1920;
+      snapCanvas.height = video.videoHeight || 1080;
+      const ctx = snapCanvas.getContext('2d');
+      if (ctx) {
+        ctx.filter = computedFilterStyle;
+        ctx.drawImage(video, 0, 0, snapCanvas.width, snapCanvas.height);
+        const dataUrl = snapCanvas.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.download = `snapshot_${videoTitle.replace(/[^a-z0-9]/gi, '_')}_${Math.floor(currentTime)}s.png`;
+        link.href = dataUrl;
+        link.click();
+        setSnapshotNotice('Snapshot captured & downloaded in full resolution!');
+        setTimeout(() => setSnapshotNotice(null), 3000);
+      }
+    } catch (e) {
+      setSnapshotNotice('Snapshot blocked by CORS stream restrictions');
+      setTimeout(() => setSnapshotNotice(null), 3000);
     }
   };
 
-  // Toggle Bookmark
-  const handleToggleBookmark = () => {
-    const existingIndex = savedBookmarks.findIndex((b) => b.url === streamUrl);
-    let nextBookmarks;
-    if (existingIndex >= 0) {
-      nextBookmarks = savedBookmarks.filter((_, i) => i !== existingIndex);
-      setIsBookmarked(false);
-    } else {
-      nextBookmarks = [{ title: videoTitle, url: streamUrl, engine: activeEngine }, ...savedBookmarks];
-      setIsBookmarked(true);
-    }
-    setSavedBookmarks(nextBookmarks);
-    try {
-      localStorage.setItem('vault_video_bookmarks', JSON.stringify(nextBookmarks));
-    } catch {}
+  // Chapter Marker Handlers
+  const handleAddMarker = (e: React.FormEvent) => {
+    e.preventDefault();
+    const label = newMarkerLabel.trim() || `Bookmark @ ${formatTime(currentTime)}`;
+    const newMarker: ChapterMarker = {
+      id: `mark_${Date.now()}`,
+      time: currentTime,
+      label,
+    };
+    setChapterMarkers((prev) => [...prev, newMarker].sort((a, b) => a.time - b.time));
+    setNewMarkerLabel('');
+  };
+
+  const handleDeleteMarker = (id: string) => {
+    setChapterMarkers((prev) => prev.filter((m) => m.id !== id));
   };
 
   // Local Video Upload
   const handleLocalFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const objectUrl = URL.createObjectURL(file);
-    loadStream(objectUrl, 'html5_native', file.name.replace(/\.[^/.]+$/, ''));
+    if (file) {
+      const blobUrl = URL.createObjectURL(file);
+      loadStream(blobUrl, 'html5_native', file.name);
+    }
   };
 
-  // Subtitle File Upload
+  // Local Subtitle File Upload
   const handleSubtitleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    setSubtitlesFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setSubtitlesText(event.target?.result as string);
-    };
-    reader.readAsText(file);
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setSubtitlesText(event.target?.result as string);
+        setSnapshotNotice(`Subtitles loaded: ${file.name}`);
+        setTimeout(() => setSnapshotNotice(null), 2500);
+      };
+      reader.readAsText(file);
+    }
   };
 
-  const currentEngineObj = PLAYBACK_ENGINES.find((e) => e.id === activeEngine) || PLAYBACK_ENGINES[0];
+  // Reset Video Filters
+  const handleResetFilters = () => {
+    setBrightness(100);
+    setContrast(100);
+    setSaturation(100);
+    setSepia(0);
+    setInvert(0);
+    setHueRotate(0);
+    setBlurPx(0);
+    setCrtMode(false);
+    setFilmGrain(false);
+  };
 
-  const formatSeconds = (s: number) => {
+  // Keyboard Shortcuts Handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+
+      switch (e.key.toLowerCase()) {
+        case ' ':
+        case 'k':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'f':
+          e.preventDefault();
+          if (!document.fullscreenElement) {
+            containerRef.current?.requestFullscreen?.();
+            setIsFullscreen(true);
+          } else {
+            document.exitFullscreen?.();
+            setIsFullscreen(false);
+          }
+          break;
+        case 't':
+          e.preventDefault();
+          setIsTheaterMode((prev) => !prev);
+          break;
+        case 'm':
+          e.preventDefault();
+          handleToggleMute();
+          break;
+        case 'j':
+        case 'arrowleft':
+          e.preventDefault();
+          handleSeek(currentTime - (e.key === 'j' ? 10 : 5));
+          break;
+        case 'l':
+        case 'arrowright':
+          e.preventDefault();
+          handleSeek(currentTime + (e.key === 'l' ? 10 : 5));
+          break;
+        case 'arrowup':
+          e.preventDefault();
+          handleVolumeChange(Math.min(1, volume + 0.1));
+          break;
+        case 'arrowdown':
+          e.preventDefault();
+          handleVolumeChange(Math.max(0, volume - 0.1));
+          break;
+        case ',':
+          e.preventDefault();
+          handleStepFrame(-1);
+          break;
+        case '.':
+          e.preventDefault();
+          handleStepFrame(1);
+          break;
+        case 's':
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault();
+            captureScreenshot();
+          }
+          break;
+        case '?':
+          e.preventDefault();
+          setShowShortcutsModal((prev) => !prev);
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentTime, duration, isPlaying, volume, isMuted]);
+
+  const formatTime = (s: number) => {
+    if (isNaN(s)) return '0:00';
     const m = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
     return `${m}:${sec < 10 ? '0' : ''}${sec}`;
   };
 
+  const currentEngineObj = PLAYBACK_ENGINES.find((e) => e.id === activeEngine) || PLAYBACK_ENGINES[0];
+
   return (
-    <div className="fixed inset-0 z-50 bg-[#030709]/95 backdrop-blur-xl flex flex-col overflow-hidden animate-in fade-in duration-300">
-      {/* Hidden File Inputs */}
+    <div
+      ref={containerRef}
+      className="fixed inset-0 z-50 bg-[#030709] flex flex-col overflow-hidden animate-in fade-in duration-200 select-none text-zinc-100 font-sans"
+    >
+      {/* Hidden File Pickers */}
       <input
         type="file"
         ref={fileInputRef}
@@ -550,100 +701,409 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
       />
 
       {/* Top Header Bar */}
-      <div className="h-16 border-b border-[#133640] px-6 bg-[#040e12]/90 flex items-center justify-between shrink-0">
+      <header className="h-14 border-b border-zinc-800/80 px-4 sm:px-6 bg-zinc-950/90 flex items-center justify-between shrink-0 z-30">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-            <Film size={18} />
+          <div className="w-8 h-8 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+            <Film size={16} />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider">
-                Vault Universal Video Studio
+              <h2 className="text-sm font-bold text-white tracking-wide truncate max-w-xs sm:max-w-md">
+                {videoTitle}
               </h2>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-mono font-bold">
-                10 Playback Engines
+              <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono">
+                {currentEngineObj.badge}
               </span>
             </div>
-            <p className="text-[11px] text-[#789d9a] truncate max-w-md">
-              {videoTitle} · Engine: <span className="text-white">{currentEngineObj.name}</span>
-            </p>
           </div>
         </div>
 
-        {/* Top Actions */}
+        {/* Top Header Controls */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="px-3 py-1.5 rounded-xl bg-[#091b20] hover:bg-[#112a32] text-cyan-300 border border-[#163c46] text-xs font-mono font-bold flex items-center gap-1.5 transition"
-            title="Open local video file from computer"
+            className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+            title="Open local video file"
           >
             <Upload size={13} />
-            <span className="hidden sm:inline">Open Video</span>
+            <span className="hidden sm:inline">Open File</span>
           </button>
 
           <button
             onClick={captureScreenshot}
-            className="px-3 py-1.5 rounded-xl bg-[#091b20] hover:bg-[#112a32] text-zinc-300 hover:text-white border border-[#163c46] text-xs font-mono font-bold flex items-center gap-1.5 transition"
-            title="Capture HD Frame Snapshot (PNG)"
+            className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+            title="Capture full resolution screenshot (S)"
           >
             <Camera size={13} />
             <span className="hidden md:inline">Snapshot</span>
           </button>
 
           <button
-            onClick={() => setShowMetricsHud(!showMetricsHud)}
-            className={`px-3 py-1.5 rounded-xl border text-xs font-mono font-bold flex items-center gap-1.5 transition ${
-              showMetricsHud ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50' : 'bg-[#091b20] text-zinc-400 border-[#163c46]'
+            onClick={() => setShowFiltersModal(true)}
+            className={`px-3 py-1.5 rounded-lg border text-xs transition flex items-center gap-1.5 cursor-pointer ${
+              computedFilterStyle !== 'none' || crtMode || filmGrain
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
             }`}
+            title="Video Color Filters & Shaders"
           >
-            <Activity size={13} />
-            <span className="hidden md:inline">HUD Stats</span>
+            <SlidersHorizontal size={13} />
+            <span className="hidden sm:inline">Filters</span>
           </button>
 
           <button
-            onClick={handleToggleBookmark}
-            className="p-2 rounded-xl bg-[#091b20] hover:bg-[#112a32] text-zinc-300 hover:text-cyan-400 border border-[#163c46] transition"
-            title="Bookmark Video Stream to Vault"
+            onClick={() => setShowMetricsHud(!showMetricsHud)}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition flex items-center gap-1.5 cursor-pointer ${
+              showMetricsHud ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-zinc-900 text-zinc-400 border-zinc-800'
+            }`}
+            title="HUD Telemetry"
           >
-            {isBookmarked ? <BookmarkCheck size={15} className="text-cyan-400" /> : <Bookmark size={15} />}
+            <Activity size={13} />
+            <span className="hidden md:inline">Stats</span>
+          </button>
+
+          <button
+            onClick={() => setShowShortcutsModal(true)}
+            className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white transition cursor-pointer"
+            title="Keyboard Shortcuts (?)"
+          >
+            <HelpCircle size={15} />
           </button>
 
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800 text-xs font-mono font-bold transition"
+            className="px-3 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/80 text-rose-300 text-xs font-medium transition cursor-pointer"
           >
-            ✕ Close Player
+            ✕ Close
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Main Content Area: Video Stage & Engine Ribbon */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Left Side: Video Canvas Stage */}
-        <div className="flex-1 flex flex-col p-4 sm:p-6 overflow-y-auto space-y-4">
-          {/* 10 PLAYBACK ENGINES SELECTOR STRIP */}
-          <div className="p-3 rounded-2xl bg-[#061418] border border-[#143640] space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-mono font-bold text-white flex items-center gap-1.5 uppercase text-[11px]">
-                <Cpu size={14} className="text-cyan-400" />
-                <span>Active Core Playback Library (10 Available):</span>
-              </span>
-              <span className="text-[10px] text-cyan-300 font-mono">
-                {currentEngineObj.flag} {currentEngineObj.badge}
-              </span>
+      {/* Snapshot Toast Notice */}
+      {snapshotNotice && (
+        <div className="absolute top-16 right-6 z-50 px-4 py-2 bg-zinc-900/95 border border-cyan-500/40 text-cyan-300 text-xs font-mono rounded-xl shadow-2xl animate-in fade-in slide-in-from-top-2">
+          {snapshotNotice}
+        </div>
+      )}
+
+      {/* Main Work Area */}
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+        {/* Stage Area */}
+        <div className={`flex-1 flex flex-col p-4 sm:p-6 overflow-y-auto space-y-4 ${isTheaterMode ? 'max-w-full' : ''}`}>
+          
+          {/* Ambient Video Wrapper */}
+          <div className="relative rounded-2xl overflow-hidden bg-black border border-zinc-800 shadow-2xl flex items-center justify-center group min-h-[340px] sm:min-h-[460px]">
+            {/* Ambient Backlight Canvas */}
+            {ambientGlow && (
+              <canvas
+                ref={ambientCanvasRef}
+                width={64}
+                height={36}
+                className="absolute inset-0 w-full h-full object-cover blur-3xl opacity-50 pointer-events-none scale-110"
+              />
+            )}
+
+            {/* CRT Scanline Overlay */}
+            {crtMode && (
+              <div className="absolute inset-0 pointer-events-none z-20 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.4)_50%)] bg-[length:100%_4px]" />
+            )}
+
+            {/* Film Grain Overlay */}
+            {filmGrain && (
+              <div className="absolute inset-0 pointer-events-none z-20 opacity-20 bg-[radial-gradient(#fff_1px,transparent_1px)] bg-[length:3px_3px]" />
+            )}
+
+            {/* Video Element */}
+            <video
+              ref={videoRef}
+              playsInline
+              crossOrigin="anonymous"
+              onTimeUpdate={handleTimeUpdate}
+              onEnded={() => setIsPlaying(false)}
+              onWaiting={() => setIsBuffering(true)}
+              onPlaying={() => setIsBuffering(false)}
+              onClick={togglePlay}
+              style={{ filter: computedFilterStyle }}
+              className={`w-full max-h-[72vh] relative z-10 transition-all cursor-pointer ${
+                aspectRatio === '16:9'
+                  ? 'aspect-video object-contain'
+                  : aspectRatio === '21:9'
+                  ? 'aspect-[21/9] object-contain'
+                  : aspectRatio === '4:3'
+                  ? 'aspect-[4/3] object-contain'
+                  : aspectRatio === 'fill'
+                  ? 'w-full h-full object-cover'
+                  : 'object-contain'
+              }`}
+            />
+
+            {/* Buffering Spinner */}
+            {isBuffering && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/50 pointer-events-none">
+                <div className="w-12 h-12 rounded-full border-3 border-cyan-400 border-t-transparent animate-spin mb-2" />
+                <span className="text-xs font-mono text-cyan-300">Buffering Media Stream...</span>
+              </div>
+            )}
+
+            {/* Subtitles Overlay */}
+            {subtitlesText && (
+              <div className="absolute bottom-16 inset-x-8 z-20 flex justify-center pointer-events-none">
+                <div
+                  className={`px-4 py-1.5 rounded-lg bg-black/80 text-yellow-300 font-medium text-center shadow-lg border border-yellow-500/20 max-w-2xl ${
+                    subtitleSize === 'sm' ? 'text-xs' : subtitleSize === 'lg' ? 'text-lg' : 'text-sm'
+                  }`}
+                >
+                  {subtitlesText.slice(0, 140)}
+                </div>
+              </div>
+            )}
+
+            {/* HUD Diagnostics Overlay */}
+            {showMetricsHud && (
+              <div className="absolute top-4 left-4 z-20 p-3 rounded-xl bg-black/85 border border-zinc-800 text-[11px] font-mono text-zinc-300 space-y-1 backdrop-blur-md pointer-events-none">
+                <div className="text-cyan-400 font-bold border-b border-zinc-800 pb-1">VIDEO HUD TELEMETRY</div>
+                <div>Engine: <span className="text-white">{currentEngineObj.name}</span></div>
+                <div>Bitrate: <span className="text-emerald-400">{videoBitrate}</span></div>
+                <div>Buffer: <span className="text-cyan-300">{bufferLength}s forward</span></div>
+                <div>Dropped: <span className="text-amber-400">{droppedFrames} frames</span></div>
+                <div>Audio Boost: <span className="text-purple-300">{Math.round(audioBoost * 100)}%</span></div>
+                <div>Resolution: <span className="text-white">{videoRef.current?.videoWidth || 1920}x{videoRef.current?.videoHeight || 1080}</span></div>
+              </div>
+            )}
+          </div>
+
+          {/* Player Transport Controls Bar */}
+          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-3">
+            {/* Seekbar with Chapter Markers and A-B Loop indicators */}
+            <div className="relative group">
+              <input
+                type="range"
+                min={0}
+                max={duration || 100}
+                step={0.1}
+                value={currentTime}
+                onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+              />
+
+              {/* Loop Point A Marker */}
+              {loopPointA !== null && duration > 0 && (
+                <div
+                  style={{ left: `${(loopPointA / duration) * 100}%` }}
+                  className="absolute top-0 w-2 h-4 bg-emerald-400 rounded-sm -translate-x-1 pointer-events-none"
+                  title={`Loop A: ${formatTime(loopPointA)}`}
+                />
+              )}
+
+              {/* Loop Point B Marker */}
+              {loopPointB !== null && duration > 0 && (
+                <div
+                  style={{ left: `${(loopPointB / duration) * 100}%` }}
+                  className="absolute top-0 w-2 h-4 bg-rose-400 rounded-sm -translate-x-1 pointer-events-none"
+                  title={`Loop B: ${formatTime(loopPointB)}`}
+                />
+              )}
+
+              {/* Chapter Pins along seekbar */}
+              {chapterMarkers.map((mark) => (
+                <div
+                  key={mark.id}
+                  onClick={() => handleSeek(mark.time)}
+                  style={{ left: `${(mark.time / (duration || 1)) * 100}%` }}
+                  className="absolute top-0 w-1.5 h-3 bg-cyan-300 hover:scale-150 transition -translate-x-0.5 cursor-pointer rounded-full"
+                  title={mark.label}
+                />
+              ))}
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            {/* Bottom Transport Row */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              {/* Left Transport: Play/Pause, Step Frames, Time */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={togglePlay}
+                  className="w-10 h-10 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold flex items-center justify-center transition cursor-pointer shadow-md shadow-cyan-500/20"
+                >
+                  {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
+                </button>
+
+                <button
+                  onClick={() => handleStepFrame(-1)}
+                  className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white transition cursor-pointer"
+                  title="Step 1 Frame Back (,)"
+                >
+                  <RotateCcw size={14} />
+                </button>
+
+                <button
+                  onClick={() => handleStepFrame(1)}
+                  className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white transition cursor-pointer"
+                  title="Step 1 Frame Forward (.)"
+                >
+                  <RotateCw size={14} />
+                </button>
+
+                <span className="text-xs font-mono text-zinc-300 ml-1">
+                  {formatTime(currentTime)} / {formatTime(duration)}
+                </span>
+              </div>
+
+              {/* Center Controls: Audio Boost & Volume */}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 bg-zinc-900 px-3 py-1.5 rounded-xl border border-zinc-800">
+                  <button onClick={handleToggleMute} className="text-zinc-400 hover:text-white cursor-pointer">
+                    {isMuted || volume === 0 ? <VolumeX size={15} /> : volume < 0.5 ? <Volume1 size={15} /> : <Volume2 size={15} />}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={volume}
+                    onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                    className="w-16 h-1.5 bg-zinc-700 rounded accent-cyan-400 cursor-pointer"
+                  />
+                </div>
+
+                {/* Audio Booster Control */}
+                <div className="flex items-center gap-1.5 bg-zinc-900 px-2.5 py-1.5 rounded-xl border border-zinc-800 text-xs font-mono">
+                  <Zap size={13} className={audioBoost > 1 ? 'text-amber-400' : 'text-zinc-500'} />
+                  <span className="text-zinc-400 hidden sm:inline">Boost:</span>
+                  {[1.0, 1.5, 2.0, 3.0].map((b) => (
+                    <button
+                      key={b}
+                      onClick={() => {
+                        initAudioBooster();
+                        setAudioBoost(b);
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition ${
+                        audioBoost === b
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {Math.round(b * 100)}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Right Controls: A-B Loop, Speed, Aspect, Theater */}
+              <div className="flex items-center gap-1.5">
+                {/* A-B Loop Buttons */}
+                <div className="flex items-center gap-1 bg-zinc-900 px-2 py-1 rounded-xl border border-zinc-800">
+                  <button
+                    onClick={() => setLoopPointA(currentTime)}
+                    className={`px-2 py-1 rounded text-[10px] font-mono font-bold cursor-pointer transition ${
+                      loopPointA !== null ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-400 hover:text-white'
+                    }`}
+                    title="Set Loop Point A"
+                  >
+                    A {loopPointA !== null && formatTime(loopPointA)}
+                  </button>
+                  <button
+                    onClick={() => setLoopPointB(currentTime)}
+                    className={`px-2 py-1 rounded text-[10px] font-mono font-bold cursor-pointer transition ${
+                      loopPointB !== null ? 'bg-rose-500/20 text-rose-400' : 'text-zinc-400 hover:text-white'
+                    }`}
+                    title="Set Loop Point B"
+                  >
+                    B {loopPointB !== null && formatTime(loopPointB)}
+                  </button>
+                  {(loopPointA !== null || loopPointB !== null) && (
+                    <button
+                      onClick={() => {
+                        setLoopPointA(null);
+                        setLoopPointB(null);
+                      }}
+                      className="text-zinc-500 hover:text-rose-400 p-1 cursor-pointer"
+                      title="Clear A-B Loop"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Speed Dropdown */}
+                <select
+                  value={playbackSpeed}
+                  onChange={(e) => handleSetSpeed(parseFloat(e.target.value))}
+                  className="bg-zinc-900 text-xs font-mono text-zinc-300 border border-zinc-800 rounded-xl px-2 py-1.5 focus:outline-none"
+                >
+                  <option value={0.5}>0.5x</option>
+                  <option value={0.75}>0.75x</option>
+                  <option value={1.0}>1.0x</option>
+                  <option value={1.25}>1.25x</option>
+                  <option value={1.5}>1.5x</option>
+                  <option value={2.0}>2.0x</option>
+                  <option value={3.0}>3.0x</option>
+                </select>
+
+                {/* Aspect Ratio Toggle */}
+                <button
+                  onClick={() => {
+                    const ratios: Array<'16:9' | '21:9' | '4:3' | 'fill'> = ['16:9', '21:9', '4:3', 'fill'];
+                    const next = ratios[(ratios.indexOf(aspectRatio as any) + 1) % ratios.length];
+                    setAspectRatio(next);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] font-mono text-zinc-300 cursor-pointer"
+                  title="Cycle Aspect Ratio"
+                >
+                  {aspectRatio}
+                </button>
+
+                {/* Theater Mode Toggle */}
+                <button
+                  onClick={() => setIsTheaterMode(!isTheaterMode)}
+                  className={`p-2 rounded-xl border transition cursor-pointer ${
+                    isTheaterMode ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                  }`}
+                  title="Theater View Mode (T)"
+                >
+                  <Tv size={15} />
+                </button>
+
+                {/* Native Fullscreen */}
+                <button
+                  onClick={() => {
+                    if (!document.fullscreenElement) {
+                      containerRef.current?.requestFullscreen?.();
+                      setIsFullscreen(true);
+                    } else {
+                      document.exitFullscreen?.();
+                      setIsFullscreen(false);
+                    }
+                  }}
+                  className="p-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white transition cursor-pointer"
+                  title="Fullscreen (F)"
+                >
+                  {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 10 Playback Core Engines Strip */}
+          <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="font-bold text-white flex items-center gap-1.5">
+                <Cpu size={14} className="text-cyan-400" />
+                <span>10 Playback Engines Available:</span>
+              </span>
+              <span className="text-zinc-500">Active: <span className="text-cyan-300">{currentEngineObj.name}</span></span>
+            </div>
+
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
               {PLAYBACK_ENGINES.map((eng) => {
                 const isActive = activeEngine === eng.id;
                 return (
                   <button
                     key={eng.id}
                     onClick={() => loadStream(streamUrl, eng.id, videoTitle)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 shrink-0 ${
+                    className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
                       isActive
-                        ? 'bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(72,228,255,0.4)]'
-                        : 'bg-[#091f24] hover:bg-[#12363f] text-zinc-300 border border-[#163d47]'
+                        ? 'bg-cyan-400 text-slate-950 font-bold shadow-md shadow-cyan-400/20'
+                        : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
                     }`}
                   >
                     <span>{eng.flag}</span>
@@ -653,361 +1113,324 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({ onClose, onO
               })}
             </div>
           </div>
-
-          {/* VIDEO STAGE CONTAINER */}
-          <div
-            ref={containerRef}
-            className={`relative bg-black rounded-3xl border border-[#163842] overflow-hidden shadow-2xl flex items-center justify-center ${
-              aspectRatio === '16:9' ? 'aspect-video' : aspectRatio === '4:3' ? 'aspect-[4/3]' : aspectRatio === '21:9' ? 'aspect-[21/9]' : 'h-[55vh]'
-            }`}
-          >
-            {/* Native Video Element */}
-            <video
-              ref={videoRef}
-              playsInline
-              crossOrigin="anonymous"
-              loop={loopEnabled}
-              onTimeUpdate={handleTimeUpdate}
-              onWaiting={() => setIsBuffering(true)}
-              onPlaying={() => {
-                setIsBuffering(false);
-                setIsPlaying(true);
-              }}
-              onPause={() => setIsPlaying(false)}
-              onError={() => setIsBuffering(false)}
-              className={`w-full h-full object-contain ${activeFilter !== 'none' ? 'opacity-0 absolute pointer-events-none' : ''}`}
-            />
-
-            {/* Post-Processing WebGL/2D Filter Canvas (when filter active) */}
-            {activeFilter !== 'none' && (
-              <canvas
-                ref={canvasRef}
-                className="w-full h-full object-contain"
-              />
-            )}
-
-            {/* Buffering Indicator */}
-            {isBuffering && (
-              <div className="absolute inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-10">
-                <div className="flex flex-col items-center gap-2 p-4 rounded-2xl bg-[#061418] border border-cyan-500/30 text-cyan-300">
-                  <RefreshCw size={32} className="animate-spin text-cyan-400" />
-                  <span className="text-xs font-mono font-bold tracking-wider">Loading via {currentEngineObj.name}...</span>
-                </div>
-              </div>
-            )}
-
-            {/* HUD Overlay Stats (when toggled) */}
-            {showMetricsHud && (
-              <div className="absolute top-4 left-4 p-3 rounded-xl bg-black/85 border border-cyan-500/40 text-[11px] font-mono text-cyan-300 space-y-1 z-20 pointer-events-none backdrop-blur-md">
-                <div className="font-bold text-white flex items-center gap-1.5 pb-1 border-b border-cyan-500/20">
-                  <Activity size={12} className="text-cyan-400" />
-                  <span>Playback Metrics HUD</span>
-                </div>
-                <div>Engine: <span className="text-white">{currentEngineObj.name}</span></div>
-                <div>Bitrate: <span className="text-white">{videoBitrate}</span></div>
-                <div>Buffer Ahead: <span className="text-emerald-400">{bufferLength}s</span></div>
-                <div>Dropped Frames: <span className={droppedFrames > 0 ? 'text-amber-400' : 'text-emerald-400'}>{droppedFrames}</span></div>
-                <div>Resolution: <span className="text-white">{videoRef.current?.videoWidth || 1920}x{videoRef.current?.videoHeight || 1080}</span></div>
-                <div>Speed: <span className="text-white">{playbackSpeed}x</span></div>
-              </div>
-            )}
-
-            {/* Subtitle Display */}
-            {subtitlesFileName && (
-              <div className="absolute bottom-16 inset-x-8 text-center pointer-events-none z-20">
-                <span className="bg-black/80 px-4 py-1.5 rounded-lg text-sm text-yellow-300 font-sans shadow-md border border-yellow-500/30">
-                  [Subtitle track active: {subtitlesFileName}]
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* CUSTOM PLAYER TRANSPORT BAR */}
-          <div className="p-4 rounded-2xl bg-[#07161a] border border-[#153842] space-y-3">
-            {/* Scrubber Timeline */}
-            <div className="space-y-1">
-              <input
-                type="range"
-                min={0}
-                max={duration || 100}
-                step={0.1}
-                value={currentTime}
-                onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                className="w-full h-2 bg-[#122e36] rounded-lg appearance-none cursor-pointer accent-cyan-400"
-              />
-              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400">
-                <span className="text-cyan-400 font-bold">{formatSeconds(currentTime)}</span>
-                {loopPointA !== null && loopPointB !== null && (
-                  <span className="text-amber-400">
-                    A-B Loop: [{formatSeconds(loopPointA)} - {formatSeconds(loopPointB)}]
-                  </span>
-                )}
-                <span>{formatSeconds(duration)}</span>
-              </div>
-            </div>
-
-            {/* Control Buttons Strip */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={togglePlay}
-                  className="px-4 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 rounded-xl font-bold text-xs flex items-center gap-1.5 transition shadow-md"
-                >
-                  {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
-                  <span>{isPlaying ? 'Pause' : 'Play'}</span>
-                </button>
-
-                <button
-                  onClick={() => handleSeek(Math.max(0, currentTime - 10))}
-                  className="p-2 rounded-xl bg-[#091f24] hover:bg-[#12363f] text-zinc-300 hover:text-white border border-[#163d47] transition"
-                  title="Rewind 10s"
-                >
-                  <RotateCcw size={14} />
-                </button>
-
-                <button
-                  onClick={() => handleSeek(Math.min(duration, currentTime + 10))}
-                  className="p-2 rounded-xl bg-[#091f24] hover:bg-[#12363f] text-zinc-300 hover:text-white border border-[#163d47] transition"
-                  title="Forward 10s"
-                >
-                  <RotateCw size={14} />
-                </button>
-
-                {/* Frame Stepper */}
-                <button
-                  onClick={() => stepFrame(-1)}
-                  className="px-2.5 py-1.5 rounded-xl bg-[#091f24] hover:bg-[#12363f] text-zinc-300 text-[11px] font-mono border border-[#163d47] transition"
-                  title="Step 1 Frame Backward"
-                >
-                  -1 Frame
-                </button>
-                <button
-                  onClick={() => stepFrame(1)}
-                  className="px-2.5 py-1.5 rounded-xl bg-[#091f24] hover:bg-[#12363f] text-zinc-300 text-[11px] font-mono border border-[#163d47] transition"
-                  title="Step 1 Frame Forward"
-                >
-                  +1 Frame
-                </button>
-
-                {/* Volume Slider */}
-                <div className="flex items-center gap-2 bg-[#091f24] px-3 py-1.5 rounded-xl border border-[#163d47]">
-                  <button
-                    onClick={() => {
-                      const next = !isMuted;
-                      setIsMuted(next);
-                      if (videoRef.current) videoRef.current.muted = next;
-                    }}
-                    className="text-zinc-300 hover:text-white"
-                  >
-                    {isMuted || volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                  </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={isMuted ? 0 : volume}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      setVolume(v);
-                      setIsMuted(v === 0);
-                      if (videoRef.current) {
-                        videoRef.current.volume = v;
-                        videoRef.current.muted = v === 0;
-                      }
-                    }}
-                    className="w-16 h-1 bg-[#163942] rounded-lg appearance-none cursor-pointer accent-cyan-400"
-                  />
-                </div>
-              </div>
-
-              {/* Advanced Tool Toggles */}
-              <div className="flex items-center gap-2">
-                {/* Playback Speed */}
-                <select
-                  value={playbackSpeed}
-                  onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
-                  className="bg-[#091f24] border border-[#163d47] text-white text-xs font-mono font-bold rounded-xl px-2.5 py-1.5 outline-none cursor-pointer"
-                >
-                  {[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0].map((s) => (
-                    <option key={s} value={s}>
-                      {s}x
-                    </option>
-                  ))}
-                </select>
-
-                {/* Video Shader Filter */}
-                <select
-                  value={activeFilter}
-                  onChange={(e) => setActiveFilter(e.target.value as VideoFilterShader)}
-                  className="bg-[#091f24] border border-[#163d47] text-cyan-300 text-xs font-mono font-bold rounded-xl px-2.5 py-1.5 outline-none cursor-pointer"
-                >
-                  <option value="none">Shader: Normal</option>
-                  <option value="crt_scanline">Shader: CRT Retro Scanline</option>
-                  <option value="cyberpunk_neon">Shader: Cyberpunk Neon</option>
-                  <option value="matrix_green">Shader: Matrix Terminal</option>
-                </select>
-
-                {/* Aspect Ratio */}
-                <select
-                  value={aspectRatio}
-                  onChange={(e) => setAspectRatio(e.target.value as any)}
-                  className="bg-[#091f24] border border-[#163d47] text-zinc-300 text-xs font-mono rounded-xl px-2.5 py-1.5 outline-none cursor-pointer"
-                >
-                  <option value="16:9">16:9</option>
-                  <option value="21:9">21:9 Cinema</option>
-                  <option value="4:3">4:3</option>
-                  <option value="fit">Fit</option>
-                </select>
-
-                {/* A-B Loop Controls */}
-                <button
-                  onClick={() => {
-                    if (loopPointA === null) setLoopPointA(currentTime);
-                    else if (loopPointB === null) setLoopPointB(currentTime);
-                    else {
-                      setLoopPointA(null);
-                      setLoopPointB(null);
-                    }
-                  }}
-                  className={`px-2.5 py-1.5 rounded-xl border text-xs font-mono font-bold transition flex items-center gap-1 ${
-                    loopPointA !== null ? 'bg-amber-500/20 text-amber-300 border-amber-500/50' : 'bg-[#091f24] text-zinc-400 border-[#163d47]'
-                  }`}
-                  title="Set Point A and Point B for continuous loop"
-                >
-                  <Repeat size={13} />
-                  <span>{loopPointA === null ? 'A-B' : loopPointB === null ? 'Set B' : 'Clear'}</span>
-                </button>
-
-                {/* DSP EQ Bridge */}
-                {onOpenDsp && (
-                  <button
-                    onClick={onOpenDsp}
-                    className="px-3 py-1.5 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800 text-xs font-mono font-bold flex items-center gap-1 transition"
-                  >
-                    <Sliders size={13} />
-                    <span>Live EQ</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
         </div>
 
-        {/* Right Side: Stream Library, Custom URL & Presets */}
-        <div className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-[#133640] p-6 bg-[#040e12]/80 overflow-y-auto space-y-6">
-          {/* Custom Stream Input Form */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
-              Custom Stream URL
-            </h3>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (customInputUrl.trim()) {
-                  const isHls = customInputUrl.includes('.m3u8');
-                  loadStream(customInputUrl.trim(), isHls ? 'hls_js' : 'html5_native', 'Custom Stream Stream');
-                }
-              }}
-              className="flex gap-2"
-            >
-              <input
-                type="text"
-                value={customInputUrl}
-                onChange={(e) => setCustomInputUrl(e.target.value)}
-                placeholder="Paste .m3u8, .mpd, or .mp4 URL..."
-                className="flex-1 bg-[#071518] border border-[#163d47] rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 outline-none focus:border-cyan-400 font-mono"
-              />
-              <button
-                type="submit"
-                disabled={!customInputUrl.trim()}
-                className="px-3 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 rounded-xl font-bold text-xs font-mono disabled:opacity-50"
-              >
-                Load
-              </button>
-            </form>
-          </div>
-
-          {/* Subtitles Input */}
-          <div className="p-3 rounded-2xl bg-[#07181c] border border-[#163d47] flex items-center justify-between">
-            <div>
-              <div className="text-xs font-bold text-white font-mono">Subtitle Track (.srt / .vtt)</div>
-              <div className="text-[11px] text-[#789d9a] truncate">
-                {subtitlesFileName || 'No subtitle file attached'}
+        {/* Right Drawer: Sample Cinema Streams & Chapter Markers */}
+        {!isTheaterMode && (
+          <aside className="w-full lg:w-80 border-t lg:border-t-0 lg:border-l border-zinc-800/80 bg-zinc-950/70 p-4 sm:p-5 flex flex-col space-y-5 overflow-y-auto shrink-0">
+            {/* Custom Stream URL Input */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-white block">Stream Direct Video URL:</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  placeholder="https://... (.m3u8, .mp4, webm)"
+                  value={customInputUrl}
+                  onChange={(e) => setCustomInputUrl(e.target.value)}
+                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400 font-mono"
+                />
+                <button
+                  onClick={() => {
+                    if (customInputUrl.trim()) {
+                      const autoEng = customInputUrl.includes('.m3u8') ? 'hls_js' : 'html5_native';
+                      loadStream(customInputUrl.trim(), autoEng, 'Custom Direct Stream');
+                      setCustomInputUrl('');
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs transition cursor-pointer"
+                >
+                  Load
+                </button>
               </div>
             </div>
-            <button
-              onClick={() => subtitleInputRef.current?.click()}
-              className="px-2.5 py-1 rounded-lg bg-[#0e2a32] text-cyan-300 text-[11px] font-mono font-bold hover:bg-[#163d47]"
-            >
-              Upload
-            </button>
-          </div>
 
-          {/* Curated Sample Streams */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
-                Curated Cinema Test Feeds
-              </h3>
-              <span className="text-[10px] text-cyan-400 font-mono">{SAMPLE_STREAMS.length} Feeds</span>
-            </div>
-
-            <div className="space-y-2.5">
-              {SAMPLE_STREAMS.map((s) => (
-                <div
-                  key={s.id}
-                  onClick={() => loadStream(s.url, s.engine, s.title)}
-                  className={`p-2.5 rounded-xl border flex gap-3 items-center cursor-pointer transition ${
-                    streamUrl === s.url
-                      ? 'bg-cyan-950/40 border-cyan-500/60 shadow-md'
-                      : 'bg-[#061418] border-[#13343d] hover:border-cyan-500/40'
-                  }`}
-                >
-                  <img
-                    src={s.thumbnail}
-                    alt={s.title}
-                    className="w-14 h-10 rounded-lg object-cover border border-[#183d47] shrink-0"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-bold text-xs text-white truncate">{s.title}</div>
-                    <div className="text-[10px] text-cyan-400 font-mono flex items-center gap-2 mt-0.5">
-                      <span>{s.resolution}</span>
-                      <span>·</span>
-                      <span>{s.duration}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Bookmarks Section */}
-          {savedBookmarks.length > 0 && (
-            <div className="space-y-3 pt-3 border-t border-[#133640]">
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-1.5">
-                <Bookmark size={13} className="text-cyan-400" />
-                <span>Vault Bookmarked Videos ({savedBookmarks.length})</span>
-              </h3>
+            {/* Curated Sample Streams */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-white block">Curated Stream Library:</span>
               <div className="space-y-2">
-                {savedBookmarks.map((b, i) => (
+                {SAMPLE_STREAMS.map((item) => (
                   <div
-                    key={i}
-                    onClick={() => loadStream(b.url, b.engine, b.title)}
-                    className="p-2.5 rounded-xl bg-[#061418] border border-[#13343d] hover:border-cyan-500/40 cursor-pointer flex items-center justify-between transition"
+                    key={item.id}
+                    onClick={() => loadStream(item.url, item.engine, item.title)}
+                    className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex items-center gap-3 ${
+                      streamUrl === item.url
+                        ? 'bg-cyan-950/40 border-cyan-500/50 text-white'
+                        : 'bg-zinc-900/60 hover:bg-zinc-900 border-zinc-800 text-zinc-300'
+                    }`}
                   >
-                    <div className="min-w-0 flex-1 pr-2">
-                      <div className="text-xs font-bold text-white truncate">{b.title}</div>
-                      <div className="text-[10px] text-zinc-500 font-mono truncate">{b.url}</div>
+                    <div className="w-12 h-12 rounded-lg bg-zinc-800 overflow-hidden shrink-0 flex items-center justify-center">
+                      <img src={item.thumbnail} alt="" className="w-full h-full object-cover" />
                     </div>
-                    <ChevronRight size={14} className="text-cyan-400 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-xs font-bold truncate">{item.title}</h4>
+                      <p className="text-[10px] text-zinc-500 truncate">{item.category} · {item.resolution}</p>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
-          )}
-        </div>
+
+            {/* Chapter Markers & Notes */}
+            <div className="space-y-2 pt-2 border-t border-zinc-900">
+              <span className="text-xs font-bold text-white block">Timeline Chapter Markers:</span>
+              <form onSubmit={handleAddMarker} className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="Marker label..."
+                  value={newMarkerLabel}
+                  onChange={(e) => setNewMarkerLabel(e.target.value)}
+                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400"
+                />
+                <button
+                  type="submit"
+                  className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-cyan-300 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1"
+                >
+                  <Plus size={12} />
+                  <span>Pin</span>
+                </button>
+              </form>
+
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {chapterMarkers.map((m) => (
+                  <div
+                    key={m.id}
+                    onClick={() => handleSeek(m.time)}
+                    className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-xs font-mono flex items-center justify-between cursor-pointer border border-zinc-800/60"
+                  >
+                    <span className="text-cyan-400">{formatTime(m.time)}</span>
+                    <span className="text-zinc-300 truncate max-w-[120px]">{m.label}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteMarker(m.id);
+                      }}
+                      className="text-zinc-600 hover:text-rose-400 p-0.5"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+                {chapterMarkers.length === 0 && (
+                  <p className="text-[11px] text-zinc-600 italic">No markers pinned yet. Pin any moment!</p>
+                )}
+              </div>
+            </div>
+          </aside>
+        )}
       </div>
+
+      {/* Video Filters & Color Grading Modal */}
+      {showFiltersModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-lg space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <SlidersHorizontal size={16} className="text-cyan-400" />
+                <span>Video Shaders & Post-Processing FX</span>
+              </h3>
+              <button
+                onClick={() => setShowFiltersModal(false)}
+                className="text-zinc-500 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-1 text-xs">
+              <div>
+                <div className="flex justify-between text-zinc-300 mb-1">
+                  <span>Brightness:</span>
+                  <span className="font-mono text-cyan-400">{brightness}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={50}
+                  max={200}
+                  value={brightness}
+                  onChange={(e) => setBrightness(parseInt(e.target.value))}
+                  className="w-full accent-cyan-400 cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-zinc-300 mb-1">
+                  <span>Contrast:</span>
+                  <span className="font-mono text-cyan-400">{contrast}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={50}
+                  max={200}
+                  value={contrast}
+                  onChange={(e) => setContrast(parseInt(e.target.value))}
+                  className="w-full accent-cyan-400 cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-zinc-300 mb-1">
+                  <span>Saturation:</span>
+                  <span className="font-mono text-cyan-400">{saturation}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={300}
+                  value={saturation}
+                  onChange={(e) => setSaturation(parseInt(e.target.value))}
+                  className="w-full accent-cyan-400 cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-zinc-300 mb-1">
+                  <span>Sepia (Vintage Warmth):</span>
+                  <span className="font-mono text-cyan-400">{sepia}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={sepia}
+                  onChange={(e) => setSepia(parseInt(e.target.value))}
+                  className="w-full accent-cyan-400 cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-zinc-300 mb-1">
+                  <span>Hue Rotation:</span>
+                  <span className="font-mono text-cyan-400">{hueRotate}°</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={360}
+                  value={hueRotate}
+                  onChange={(e) => setHueRotate(parseInt(e.target.value))}
+                  className="w-full accent-cyan-400 cursor-pointer"
+                />
+              </div>
+
+              {/* Toggles: CRT, Film Grain, Ambient Glow */}
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setCrtMode(!crtMode)}
+                  className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                    crtMode ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <div className="font-bold">CRT Lines</div>
+                  <div className="text-[10px] text-zinc-500">{crtMode ? 'Active' : 'Off'}</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setFilmGrain(!filmGrain)}
+                  className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                    filmGrain ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <div className="font-bold">Film Grain</div>
+                  <div className="text-[10px] text-zinc-500">{filmGrain ? 'Active' : 'Off'}</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAmbientGlow(!ambientGlow)}
+                  className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                    ambientGlow ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <div className="font-bold">Ambient Glow</div>
+                  <div className="text-[10px] text-zinc-500">{ambientGlow ? 'Active' : 'Off'}</div>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-xs text-zinc-400 hover:text-white cursor-pointer"
+              >
+                Reset to Defaults
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowFiltersModal(false)}
+                className="px-4 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs cursor-pointer"
+              >
+                Apply Shaders
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Keyboard Shortcuts Modal */}
+      {showShortcutsModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-md space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <HelpCircle size={16} className="text-cyan-400" />
+                <span>Player Keyboard Shortcuts</span>
+              </h3>
+              <button onClick={() => setShowShortcutsModal(false)} className="text-zinc-500 hover:text-white">✕</button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between">
+                <span className="text-zinc-400">Play / Pause:</span>
+                <span className="text-cyan-400 font-bold">Space / K</span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between">
+                <span className="text-zinc-400">Fullscreen:</span>
+                <span className="text-cyan-400 font-bold">F</span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between">
+                <span className="text-zinc-400">Theater View:</span>
+                <span className="text-cyan-400 font-bold">T</span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between">
+                <span className="text-zinc-400">Mute Audio:</span>
+                <span className="text-cyan-400 font-bold">M</span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between">
+                <span className="text-zinc-400">Seek ±5s:</span>
+                <span className="text-cyan-400 font-bold">← / →</span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between">
+                <span className="text-zinc-400">Seek ±10s:</span>
+                <span className="text-cyan-400 font-bold">J / L</span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between">
+                <span className="text-zinc-400">Step 1 Frame:</span>
+                <span className="text-cyan-400 font-bold">, / .</span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between">
+                <span className="text-zinc-400">Volume ±10%:</span>
+                <span className="text-cyan-400 font-bold">↑ / ↓</span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 flex justify-between col-span-2">
+                <span className="text-zinc-400">Full Resolution Snapshot:</span>
+                <span className="text-cyan-400 font-bold">S</span>
+              </div>
+            </div>
+
+            <div className="pt-2 text-right">
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Close Legend
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

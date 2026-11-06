@@ -269,10 +269,9 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
       description: `User-crafted ${activeBandCount}-band custom equalization curve`,
       points: currentBandDefs.map((b, i) => ({ freq: b.freq, gain: currentGains[i] ?? 0 })),
       bandCount: activeBandCount,
-      gains: currentGains,
-      preAmpGain: settings.eq.preAmpGain || 0,
-      autoGainCompensation: settings.eq.autoGainCompensation || false,
-      qFactorMultiplier: settings.eq.qFactorMultiplier || 1.0,
+      preAmpGain: eqSettings.preAmpGain || 0,
+      autoGainCompensation: eqSettings.autoGainCompensation || false,
+      qFactorMultiplier: (eqSettings as any).qFactorMultiplier || 1.0,
       isCustom: true,
       createdAt: Date.now(),
     };
@@ -339,12 +338,12 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
   // Export EQ curve to clipboard
   const handleExportEQ = () => {
     const exportData = {
-      name: settings.eq.activePreset || 'Custom Spotui Curve',
+      name: eqSettings.activePreset || 'Custom Spotui Curve',
       bandCount: activeBandCount,
       gains: currentGains,
-      preAmpGain: settings.eq.preAmpGain || 0,
-      autoGainCompensation: settings.eq.autoGainCompensation || false,
-      qFactorMultiplier: settings.eq.qFactorMultiplier || 1.0,
+      preAmpGain: eqSettings.preAmpGain || 0,
+      autoGainCompensation: eqSettings.autoGainCompensation || false,
+      qFactorMultiplier: (eqSettings as any).qFactorMultiplier || 1.0,
       bands: currentBandDefs.map((b, i) => ({
         freq: b.freq,
         label: b.label,
@@ -519,13 +518,15 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
             points.push({ x: ptX, y: ptY });
           });
 
-          if (points.length > 0) {
-            ctx.moveTo(points[0].x, points[0].y);
-            for (let i = 0; i < points.length - 1; i++) {
-              const p0 = i > 0 ? points[i - 1] : points[i];
-              const p1 = points[i];
-              const p2 = points[i + 1];
-              const p3 = i < points.length - 2 ? points[i + 2] : p2;
+          const validPoints = points.filter((pt) => Number.isFinite(pt.x) && Number.isFinite(pt.y));
+
+          if (validPoints.length > 1) {
+            ctx.moveTo(validPoints[0].x, validPoints[0].y);
+            for (let i = 0; i < validPoints.length - 1; i++) {
+              const p0 = i > 0 ? validPoints[i - 1] : validPoints[i];
+              const p1 = validPoints[i];
+              const p2 = validPoints[i + 1];
+              const p3 = i < validPoints.length - 2 ? validPoints[i + 2] : p2;
 
               const cp1x = p1.x + (p2.x - p0.x) / 6;
               const cp1y = p1.y + (p2.y - p0.y) / 6;
@@ -536,7 +537,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
             }
             ctx.stroke();
 
-            points.forEach((pt) => {
+            validPoints.forEach((pt) => {
               ctx.beginPath();
               ctx.fillStyle = '#ffffff';
               ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
@@ -545,6 +546,11 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
               ctx.lineWidth = 1.5;
               ctx.stroke();
             });
+          } else if (validPoints.length === 1) {
+            ctx.beginPath();
+            ctx.fillStyle = '#ffffff';
+            ctx.arc(validPoints[0].x, validPoints[0].y, 4, 0, Math.PI * 2);
+            ctx.fill();
           }
 
           ctx.shadowBlur = 0;
@@ -563,8 +569,6 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
       audioEngine.stopTestTone();
     };
   }, [isOpen, eqSettings.enabled, activeBandCount, currentGains, currentBandDefs]);
-
-  if (!isOpen) return null;
 
   // Filtered preset list combining built-in and IndexedDB custom presets
   const filteredPresets = useMemo(() => {
@@ -612,6 +616,8 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
       return matchesCategory && matchesSearch;
     });
   }, [customPresets, presetCategory, presetSearch, activeBandCount]);
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -986,7 +992,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                             min="-12"
                             max="12"
                             step="0.2"
-                            disabled={!settings.eq.enabled}
+                            disabled={!eqSettings.enabled}
                             value={val}
                             onChange={(e) => {
                               handleBandGainChange(idx, parseFloat(e.target.value));
@@ -998,7 +1004,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                         {/* Interactive dB readout badge (click to zero) */}
                         <button
                           onClick={() => handleBandGainChange(idx, 0)}
-                          disabled={!settings.eq.enabled}
+                          disabled={!eqSettings.enabled}
                           className={`mt-2 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border transition-colors cursor-pointer w-full truncate ${
                             isBoost
                               ? 'bg-cyan-950/80 border-cyan-700 text-[#48e4ff]'
@@ -1060,7 +1066,7 @@ export const AudioDspModal: React.FC<AudioDspModalProps> = ({
                 {/* Preset Cards Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
                   {filteredPresets.map((p) => {
-                    const isCurrent = settings.eq.activePreset === (p.id || p.key || p.name);
+                    const isCurrent = eqSettings.activePreset === (p.id || p.key || p.name);
                     return (
                       <div
                         key={p.key}

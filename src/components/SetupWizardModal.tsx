@@ -42,13 +42,13 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     // Update settings
     let eqSettings = { ...settings.eq };
     if (selectedEqPreset === 'bass') {
-      eqSettings = { enabled: true, bass: 6, lowMid: 3, vocal: 0, highMid: 1, treble: 2 };
+      eqSettings = { ...eqSettings, enabled: true, bandCount: 5, gains: [6, 3, 0, 1, 2], bass: 6, lowMid: 3, vocal: 0, highMid: 1, treble: 2 };
     } else if (selectedEqPreset === 'studio') {
-      eqSettings = { enabled: true, bass: 2, lowMid: 0, vocal: 1, highMid: 2, treble: 3 };
+      eqSettings = { ...eqSettings, enabled: true, bandCount: 5, gains: [2, 0, 1, 2, 3], bass: 2, lowMid: 0, vocal: 1, highMid: 2, treble: 3 };
     } else if (selectedEqPreset === 'vocal') {
-      eqSettings = { enabled: true, bass: -1, lowMid: 1, vocal: 5, highMid: 3, treble: 2 };
+      eqSettings = { ...eqSettings, enabled: true, bandCount: 5, gains: [-1, 1, 5, 3, 2], bass: -1, lowMid: 1, vocal: 5, highMid: 3, treble: 2 };
     } else {
-      eqSettings = { enabled: true, bass: 0, lowMid: 0, vocal: 0, highMid: 0, treble: 0 };
+      eqSettings = { ...eqSettings, enabled: true, bandCount: 5, gains: [0, 0, 0, 0, 0], bass: 0, lowMid: 0, vocal: 0, highMid: 0, treble: 0 };
     }
 
     onUpdateSettings({

@@ -42,6 +42,7 @@ import { ytMusicHandler } from './subpages/ytmusic/handler/YtMusicHandler';
 import { ProxiesMain } from './subpages/proxies/ProxiesMain';
 import { WebProxyMain } from './subpages/webproxy/WebProxyMain';
 import { VaultMain } from './subpages/vault/VaultMain';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 import { Track, Playlist, AppSettings } from './types';
 import { audioEngine } from './lib/audioEngine';
@@ -1575,12 +1576,14 @@ export default function App() {
         }}
       />
 
-      <AudioDspModal
-        isOpen={showDspModal}
-        onClose={() => setShowDspModal(false)}
-        settings={settings}
-        onUpdateSettings={setSettings}
-      />
+      <ErrorBoundary fallbackTitle="Audio DSP & Equalizer Deck">
+        <AudioDspModal
+          isOpen={showDspModal}
+          onClose={() => setShowDspModal(false)}
+          settings={settings}
+          onUpdateSettings={setSettings}
+        />
+      </ErrorBoundary>
 
       <SetupWizardModal
         isOpen={showSetupWizard}

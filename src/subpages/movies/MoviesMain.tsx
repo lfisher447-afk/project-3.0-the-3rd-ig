@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Film,
   Search,
@@ -31,6 +31,10 @@ import {
   Sliders,
   CheckCircle2,
   Radio,
+  Key,
+  X,
+  Video,
+  Filter,
 } from 'lucide-react';
 import Hls from 'hls.js';
 import { AppSettings } from '../../types';
@@ -260,7 +264,30 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
   // Details Tabs
   const [cast, setCast] = useState<CastMember[]>([]);
   const [recommended, setRecommended] = useState<MovieItem[]>([]);
-  const [activeDetailTab, setActiveDetailTab] = useState<'episodes' | 'cast' | 'similar' | 'servers'>('episodes');
+  const [watchProviders, setWatchProviders] = useState<any[]>([]);
+  const [activeDetailTab, setActiveDetailTab] = useState<'episodes' | 'cast' | 'similar' | 'providers'>('episodes');
+
+  // In-App 4K Trailer Modal
+  const [showTrailerModal, setShowTrailerModal] = useState(false);
+
+  // TMDB Key Customizer & Diagnostic Modal
+  const [customTmdbKey, setCustomTmdbKey] = useState(() => {
+    try {
+      return localStorage.getItem('spotui_tmdb_key') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [showTmdbModal, setShowTmdbModal] = useState(false);
+  const [tmdbTestResult, setTmdbTestResult] = useState<string | null>(null);
+  const [isTestingKey, setIsTestingKey] = useState(false);
+
+  // Active key
+  const tmdbKey = customTmdbKey.trim() || settings?.movies?.tmdbApiKey || '15d2166f754b7132e022f6e520a32049';
+
+  // Rating & Sort Filters
+  const [minRating, setMinRating] = useState<number>(0);
+  const [sortBy, setSortBy] = useState<'popularity.desc' | 'vote_average.desc' | 'release_date.desc'>('popularity.desc');
 
   // Watch History & Watchlist
   const [watchlist, setWatchlist] = useState<MovieItem[]>(() => {
@@ -282,9 +309,6 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
   });
 
   const [activeViewTab, setActiveViewTab] = useState<'trending' | 'watchlist' | 'history'>('trending');
-
-  // TMDB Key fallback
-  const tmdbKey = settings?.movies?.tmdbApiKey || '15d2166f754b7132e022f6e520a32049';
 
   // Benchmark Server Latency Pings
   useEffect(() => {
@@ -421,9 +445,44 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
       }
     } catch {}
 
-    // 4. If TV, fetch season episodes
+    // 4. Fetch Watch Providers (Where to Stream)
+    try {
+      const provRes = await fetch(`https://api.themoviedb.org/3/${type}/${item.id}/watch/providers?api_key=${tmdbKey}`);
+      if (provRes.ok) {
+        const provData = await provRes.json();
+        const results = provData.results || {};
+        const usOrAny = results.US || results.GB || results.CA || Object.values(results)[0] || {};
+        const providers = [
+          ...((usOrAny as any).flatrate || []),
+          ...((usOrAny as any).buy || []),
+          ...((usOrAny as any).rent || []),
+        ];
+        const unique = Array.from(new Map(providers.map((p: any) => [p.provider_id, p])).values());
+        setWatchProviders(unique.slice(0, 8));
+      }
+    } catch {}
+
+    // 5. If TV, fetch season episodes
     if (isTv) {
       fetchSeasonEpisodes(item.id, s);
+    }
+  };
+
+  const handleTestTmdbKey = async () => {
+    setIsTestingKey(true);
+    setTmdbTestResult(null);
+    try {
+      const res = await fetch(`https://api.themoviedb.org/3/authentication?api_key=${tmdbKey}`);
+      const data = await res.json();
+      if (data.success || res.ok) {
+        setTmdbTestResult('SUCCESS: TMDB API Key is active & verified with unlimited rate quota!');
+      } else {
+        setTmdbTestResult(`ERROR: ${data.status_message || 'Invalid API Key'}`);
+      }
+    } catch (e: any) {
+      setTmdbTestResult(`ERROR: Failed to reach TMDB API (${e.message})`);
+    } finally {
+      setIsTestingKey(false);
     }
   };
 

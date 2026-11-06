@@ -2,6 +2,7 @@ import React from "react";
 import { getList } from "../store";
 
 export interface ListItemProps {
+  key?: React.Key;
   id: string;
   name: string;
   img?: string;

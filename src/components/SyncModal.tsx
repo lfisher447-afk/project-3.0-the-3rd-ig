@@ -38,7 +38,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   onClose,
   onSyncComplete,
 }) => {
-  const [modalTab, setModalTab] = useState<'cloud_sync' | 'url_import'>('cloud_sync');
+  const [modalTab, setModalTab] = useState<'cloud_sync' | 'url_import' | 'backup_export'>('cloud_sync');
 
   // Cloud Sync State
   const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>(cloudSync.getStatus());
@@ -48,12 +48,79 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
 
+  // Backup & Restore file input ref
+  const backupInputRef = React.useRef<HTMLInputElement>(null);
+
   // URL Import State
   const [sourceType, setSourceType] = useState<'spotify' | 'youtube'>('spotify');
   const [urlInput, setUrlInput] = useState('');
   const [isResolving, setIsResolving] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleExportBackup = async () => {
+    try {
+      const tracks = await getAllTracks();
+      const playlists = await getAllPlaylists();
+      const backupData = {
+        app: 'spotui-vault',
+        version: '4.0',
+        exportedAt: new Date().toISOString(),
+        tracksCount: tracks.length,
+        playlistsCount: playlists.length,
+        tracks: tracks.map((t) => ({ ...t, blob: null })),
+        playlists,
+      };
+
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `spotui-vault-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setSyncSuccessMsg(`Exported ${tracks.length} tracks & ${playlists.length} playlists to offline backup!`);
+      setTimeout(() => setSyncSuccessMsg(null), 3500);
+    } catch (err: any) {
+      setError(err.message || 'Failed to export backup');
+    }
+  };
+
+  const handleImportBackupFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const data = JSON.parse(text);
+        if (!data || !Array.isArray(data.tracks)) {
+          throw new Error('Invalid Spotui backup format: missing tracks list');
+        }
+
+        if (data.tracks.length > 0) {
+          await saveTracksBatch(data.tracks);
+        }
+
+        if (Array.isArray(data.playlists)) {
+          for (const pl of data.playlists) {
+            await savePlaylist(pl);
+          }
+        }
+
+        setSyncSuccessMsg(`Restored ${data.tracks.length} tracks & ${data.playlists?.length || 0} playlists!`);
+        setTimeout(() => setSyncSuccessMsg(null), 3500);
+        onSyncComplete();
+      } catch (err: any) {
+        setError(err.message || 'Failed to restore backup file');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   const [resolvedCollection, setResolvedCollection] = useState<{
     name: string;
@@ -303,6 +370,17 @@ export const SyncModal: React.FC<SyncModalProps> = ({
             <Music2 size={14} />
             <span>Import Link (Spotify / YouTube)</span>
           </button>
+          <button
+            onClick={() => setModalTab('backup_export')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              modalTab === 'backup_export'
+                ? 'bg-[#48e4ff] text-[#051a20] shadow-md shadow-cyan-500/20'
+                : 'text-zinc-400 hover:text-white hover:bg-[#0c2227]'
+            }`}
+          >
+            <Database size={14} />
+            <span>Backup & Restore (.json)</span>
+          </button>
         </div>
 
         {/* Notifications & Status Alerts */}
@@ -457,7 +535,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                 </div>
               )}
             </div>
-          ) : (
+          ) : modalTab === 'url_import' ? (
             /* URL Import Tab (Spotify / YouTube) */
             <div className="space-y-4">
               <div className="flex items-center gap-2 p-1 bg-[#051316] border border-[#13323a] rounded-xl">
@@ -580,6 +658,58 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                   </button>
                 </div>
               )}
+            </div>
+          ) : (
+            /* Backup & Restore Tab */
+            <div className="space-y-4">
+              <input
+                type="file"
+                ref={backupInputRef}
+                onChange={handleImportBackupFile}
+                accept=".json"
+                className="hidden"
+              />
+
+              <div className="p-5 rounded-2xl bg-[#06181b] border border-[#173a44] space-y-3">
+                <div className="flex items-center gap-2">
+                  <Download className="text-[#48e4ff]" size={18} />
+                  <h3 className="text-sm font-bold text-white">Download Offline Library Backup</h3>
+                </div>
+                <p className="text-xs text-[#789d9a] leading-relaxed">
+                  Export all your tracks, custom playlists, and vault metadata into a portable JSON file. Keep it in Google Drive, USB drive, or transfer it to another computer without requiring network syncing.
+                </p>
+                <button
+                  onClick={handleExportBackup}
+                  className="w-full py-2.5 rounded-xl bg-[#48e4ff] hover:bg-cyan-300 text-[#051a20] font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 cursor-pointer"
+                >
+                  <Download size={15} />
+                  <span>Download Offline Backup (.json)</span>
+                </button>
+              </div>
+
+              <div className="p-5 rounded-2xl bg-[#051316] border border-[#14353e] space-y-3">
+                <div className="flex items-center gap-2">
+                  <Upload className="text-emerald-400" size={18} />
+                  <h3 className="text-sm font-bold text-white">Restore from Backup File</h3>
+                </div>
+                <p className="text-xs text-[#789d9a] leading-relaxed">
+                  Upload a previously saved <span className="font-mono text-zinc-300">.json</span> file to merge and restore your entire song library and playlists instantly into IndexedDB.
+                </p>
+                <button
+                  onClick={() => backupInputRef.current?.click()}
+                  className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                >
+                  <Upload size={15} />
+                  <span>Select JSON File to Restore</span>
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl bg-[#030d10] border border-[#112f37] flex items-center gap-3">
+                <Shield className="text-[#48e4ff] shrink-0" size={18} />
+                <div className="text-[11px] text-[#789d9a]">
+                  <strong className="text-white">Privacy Guarantee:</strong> All backup generation and parsing runs 100% locally in your browser sandbox. No file data is uploaded to third-party analytics.
+                </div>
+              </div>
             </div>
           )}
         </div>

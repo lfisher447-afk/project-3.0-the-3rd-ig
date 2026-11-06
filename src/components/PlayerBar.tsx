@@ -221,14 +221,14 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
         {/* DSP Studio Button */}
         <button
           onClick={onOpenDsp}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
-            settings.eq.enabled || settings.spatial.mode !== 'off'
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+            settings?.eq?.enabled || (settings?.spatial?.mode && settings?.spatial?.mode !== 'off')
               ? 'bg-cyan-950/60 border-cyan-500/50 text-cyan-300 shadow-[0_0_12px_rgba(56,189,248,0.2)]'
               : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
           }`}
           title="Audio DSP & EQ Studio"
         >
-          <Sliders size={14} className={settings.eq.enabled ? 'text-cyan-400 animate-pulse' : ''} />
+          <Sliders size={14} className={settings?.eq?.enabled ? 'text-cyan-400 animate-pulse' : ''} />
           <span>DSP</span>
         </button>
 
