@@ -297,9 +297,18 @@ export const WebProxyBrowser: React.FC = () => {
           </button>
 
           <button
-            onClick={() => window.open(activeTab.url, '_blank')}
+            onClick={() => {
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(activeTab.url);
+              }
+              try {
+                window.open(activeTab.url, '_blank');
+              } catch {
+                // sandboxed environment
+              }
+            }}
             className="p-2 rounded-lg bg-[#0e242a] text-[#789d9a] hover:text-white transition-colors"
-            title="Open in new external tab"
+            title="Copy URL & open tab"
           >
             <ExternalLink size={15} />
           </button>

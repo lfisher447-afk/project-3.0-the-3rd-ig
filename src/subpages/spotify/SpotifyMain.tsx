@@ -270,6 +270,7 @@ export const SpotifyMain: React.FC<SpotifyMainProps> = ({
           onPlayTrack={onPlayTrack}
           currentTrackId={currentTrack?.id}
           isPlaying={isPlaying}
+          onSelectCollection={(urlOrId) => handleResolveUrl(undefined, urlOrId)}
         />
       )}
 

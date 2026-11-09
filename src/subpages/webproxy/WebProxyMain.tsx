@@ -272,18 +272,22 @@ export const WebProxyMain: React.FC = () => {
     document.getElementsByTagName('head')[0].appendChild(link);
 
     if (preset === 'blank') {
-      const win = window.open('about:blank', '_blank');
-      if (win) {
-        const iframe = win.document.createElement('iframe');
-        iframe.style.width = '100vw';
-        iframe.style.height = '100vh';
-        iframe.style.border = 'none';
-        iframe.style.position = 'fixed';
-        iframe.style.top = '0';
-        iframe.style.left = '0';
-        iframe.src = window.location.href;
-        win.document.body.style.margin = '0';
-        win.document.body.appendChild(iframe);
+      try {
+        const win = window.open('about:blank', '_blank');
+        if (win) {
+          const iframe = win.document.createElement('iframe');
+          iframe.style.width = '100vw';
+          iframe.style.height = '100vh';
+          iframe.style.border = 'none';
+          iframe.style.position = 'fixed';
+          iframe.style.top = '0';
+          iframe.style.left = '0';
+          iframe.src = window.location.href;
+          win.document.body.style.margin = '0';
+          win.document.body.appendChild(iframe);
+        }
+      } catch {
+        // Sandboxed iframe protection
       }
     }
   };

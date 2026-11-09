@@ -8,12 +8,14 @@ interface SpotifySearchProps {
   onPlayTrack: (track: Track, trackList?: Track[]) => void;
   currentTrackId?: string;
   isPlaying?: boolean;
+  onSelectCollection?: (urlOrId: string) => void;
 }
 
 export const SpotifySearch: React.FC<SpotifySearchProps> = ({
   onPlayTrack,
   currentTrackId,
   isPlaying,
+  onSelectCollection,
 }) => {
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -194,7 +196,8 @@ export const SpotifySearch: React.FC<SpotifySearchProps> = ({
               {[...results.albums, ...results.playlists].map((item, idx) => (
                 <div
                   key={item.id || idx}
-                  className="p-3.5 rounded-2xl bg-[#08191d] border border-[#173842] hover:border-[#48e4ff]/50 transition group flex flex-col justify-between"
+                  onClick={() => onSelectCollection?.(item.id || item.name)}
+                  className="p-3.5 rounded-2xl bg-[#08191d] border border-[#173842] hover:border-[#1db954] transition-all group flex flex-col justify-between cursor-pointer hover:-translate-y-0.5 shadow-md"
                 >
                   <div className="aspect-square rounded-xl overflow-hidden mb-3 bg-zinc-900 relative">
                     <img
@@ -202,11 +205,17 @@ export const SpotifySearch: React.FC<SpotifySearchProps> = ({
                       alt={item.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                      <div className="w-10 h-10 rounded-full bg-[#1db954] flex items-center justify-center text-black shadow-lg">
+                        <Play size={18} className="fill-current ml-0.5" />
+                      </div>
+                    </div>
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-white truncate">{item.name}</div>
-                    <div className="text-[11px] text-zinc-400 truncate mt-0.5">
-                      {item.artist || 'Collection'} • {item.trackCount || 10} tracks
+                    <div className="text-xs font-bold text-white truncate group-hover:text-[#1db954] transition-colors">{item.name}</div>
+                    <div className="text-[11px] text-zinc-400 truncate mt-0.5 flex items-center justify-between">
+                      <span>{item.artist || 'Collection'}</span>
+                      <span className="text-[#1db954] font-medium text-[10px]">Open →</span>
                     </div>
                   </div>
                 </div>

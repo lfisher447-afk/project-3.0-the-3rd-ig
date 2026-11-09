@@ -246,9 +246,15 @@ export default function ActionsMenu() {
         <li
           className="px-6 py-3 flex items-center gap-4 hover:bg-white/5 cursor-pointer text-zinc-200 transition-colors"
           onClick={() => {
-            window.open(
-              "https://www.youtube.com/watch?v=" + store.actionsMenu?.id,
-            );
+            const url = "https://www.youtube.com/watch?v=" + store.actionsMenu?.id;
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(url);
+            }
+            try {
+              window.open(url, '_blank');
+            } catch {
+              // sandboxed environment
+            }
             closeDialog();
           }}
         >

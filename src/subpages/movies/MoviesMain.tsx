@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import Hls from 'hls.js';
 import { AppSettings } from '../../types';
+import { VaultVideoPlayer } from '../vault/VaultVideoPlayer';
 
 interface MoviesMainProps {
   settings?: AppSettings;
@@ -228,21 +229,39 @@ export const MOVIE_SERVERS: MovieServer[] = [
   },
 ];
 
+const TMDB_SECTIONS = [
+  { id: 'trending', label: 'Trending Today', icon: '🔥' },
+  { id: 'top_rated', label: 'Top Rated Classics', icon: '⭐' },
+  { id: 'now_playing', label: 'In Theaters Now', icon: '🎬' },
+  { id: 'upcoming', label: 'Upcoming Releases', icon: '🚀' },
+  { id: 'tv_popular', label: 'Popular TV Series', icon: '📺' },
+] as const;
+
 const GENRES = [
-  { id: 0, name: '🔥 All Trending' },
+  { id: 0, name: 'All Genres' },
   { id: 28, name: 'Action' },
-  { id: 878, name: 'Sci-Fi' },
-  { id: 27, name: 'Horror' },
-  { id: 35, name: 'Comedy' },
-  { id: 18, name: 'Drama' },
+  { id: 12, name: 'Adventure' },
   { id: 16, name: 'Animation' },
-  { id: 53, name: 'Thriller' },
-  { id: 14, name: 'Fantasy' },
+  { id: 35, name: 'Comedy' },
   { id: 80, name: 'Crime' },
+  { id: 99, name: 'Documentary' },
+  { id: 18, name: 'Drama' },
+  { id: 10751, name: 'Family' },
+  { id: 14, name: 'Fantasy' },
+  { id: 36, name: 'History' },
+  { id: 27, name: 'Horror' },
+  { id: 10402, name: 'Music' },
+  { id: 9648, name: 'Mystery' },
+  { id: 10749, name: 'Romance' },
+  { id: 878, name: 'Sci-Fi' },
+  { id: 53, name: 'Thriller' },
+  { id: 10752, name: 'War' },
+  { id: 37, name: 'Western' },
 ];
 
 export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
   const [activeCategory, setActiveCategory] = useState<number>(0);
+  const [activeSection, setActiveSection] = useState<'trending' | 'top_rated' | 'now_playing' | 'upcoming' | 'tv_popular'>('trending');
   const [mediaTypeFilter, setMediaTypeFilter] = useState<'all' | 'movie' | 'tv'>('all');
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -260,6 +279,9 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
   const [isTheater, setIsTheater] = useState(false);
   const [useNativeStreamLoader, setUseNativeStreamLoader] = useState(false);
   const [ambientGlow, setAmbientGlow] = useState(true);
+
+  // Dedicated Video Player Integration
+  const [showDedicatedPlayer, setShowDedicatedPlayer] = useState(false);
 
   // Details Tabs
   const [cast, setCast] = useState<CastMember[]>([]);
@@ -284,6 +306,29 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
 
   // Active key
   const tmdbKey = customTmdbKey.trim() || settings?.movies?.tmdbApiKey || '15d2166f754b7132e022f6e520a32049';
+
+  const handleTestAndSaveTmdbKey = async (keyToTest: string) => {
+    setIsTestingKey(true);
+    setTmdbTestResult(null);
+    try {
+      const res = await fetch(`https://api.themoviedb.org/3/authentication?api_key=${encodeURIComponent(keyToTest)}`);
+      const data = await res.json();
+      if (data.success || res.ok) {
+        localStorage.setItem('spotui_tmdb_key', keyToTest);
+        setCustomTmdbKey(keyToTest);
+        setTmdbTestResult('Key verified & saved successfully! Refreshing cinema...');
+        setTimeout(() => {
+          fetchMoviesData();
+        }, 300);
+      } else {
+        setTmdbTestResult(`Validation error: ${data.status_message || 'Invalid key'}`);
+      }
+    } catch (err: any) {
+      setTmdbTestResult(`Network error: ${err.message || 'Failed to connect to TMDB'}`);
+    } finally {
+      setIsTestingKey(false);
+    }
+  };
 
   // Rating & Sort Filters
   const [minRating, setMinRating] = useState<number>(0);
@@ -336,21 +381,27 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
     pingServers();
   }, []);
 
-  // Fetch Movies on Category or Filter change
+  // Fetch Movies on Section, Category or Filter change
   useEffect(() => {
     fetchMoviesData();
-  }, [activeCategory, mediaTypeFilter]);
+  }, [activeSection, activeCategory, mediaTypeFilter]);
 
   const fetchMoviesData = async () => {
     setIsSearching(true);
     try {
       let endpoint = '';
       if (activeCategory > 0) {
-        endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${tmdbKey}&with_genres=${activeCategory}&sort_by=popularity.desc`;
-      } else if (mediaTypeFilter === 'tv') {
+        endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${tmdbKey}&with_genres=${activeCategory}&sort_by=${sortBy}`;
+      } else if (activeSection === 'top_rated') {
+        endpoint = `https://api.themoviedb.org/3/movie/top_rated?api_key=${tmdbKey}&language=en-US&page=1`;
+      } else if (activeSection === 'now_playing') {
+        endpoint = `https://api.themoviedb.org/3/movie/now_playing?api_key=${tmdbKey}&language=en-US&page=1`;
+      } else if (activeSection === 'upcoming') {
+        endpoint = `https://api.themoviedb.org/3/movie/upcoming?api_key=${tmdbKey}&language=en-US&page=1`;
+      } else if (activeSection === 'tv_popular' || mediaTypeFilter === 'tv') {
         endpoint = `https://api.themoviedb.org/3/tv/popular?api_key=${tmdbKey}&language=en-US&page=1`;
       } else if (mediaTypeFilter === 'movie') {
-        endpoint = `https://api.themoviedb.org/3/movie/popular?api_key=${tmdbKey}&language=en-US&page=1`;
+        endpoint = `https://api.themoviedb.org/3/trending/movie/day?api_key=${tmdbKey}`;
       } else {
         endpoint = `https://api.themoviedb.org/3/trending/all/day?api_key=${tmdbKey}`;
       }
@@ -556,10 +607,19 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
 
         {/* Server Count & View Filter Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setShowTmdbModal(true)}
+            className="px-3 py-1.5 rounded-xl text-xs font-mono font-bold bg-[#0a1f24] hover:bg-[#12363f] text-rose-300 border border-[#173e48] transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Configure or test TMDB API Key"
+          >
+            <Key size={13} />
+            <span>TMDB Key</span>
+          </button>
+
           <div className="flex items-center gap-1 bg-[#091b20] p-1 rounded-2xl border border-[#163942]">
             <button
               onClick={() => setActiveViewTab('trending')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition cursor-pointer ${
                 activeViewTab === 'trending' ? 'bg-rose-600 text-white shadow-md' : 'text-zinc-400 hover:text-white'
               }`}
             >
@@ -567,7 +627,7 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
             </button>
             <button
               onClick={() => setActiveViewTab('watchlist')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1 cursor-pointer ${
                 activeViewTab === 'watchlist' ? 'bg-rose-600 text-white shadow-md' : 'text-zinc-400 hover:text-white'
               }`}
             >
@@ -576,7 +636,7 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
             </button>
             <button
               onClick={() => setActiveViewTab('history')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1 cursor-pointer ${
                 activeViewTab === 'history' ? 'bg-rose-600 text-white shadow-md' : 'text-zinc-400 hover:text-white'
               }`}
             >
@@ -660,6 +720,29 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
           </button>
         </form>
 
+        {/* Curated TMDB Release Sections */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          {TMDB_SECTIONS.map((sec) => (
+            <button
+              key={sec.id}
+              onClick={() => {
+                setActiveSection(sec.id);
+                setActiveCategory(0);
+                setQuery('');
+                setActiveViewTab('trending');
+              }}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
+                activeSection === sec.id && activeCategory === 0
+                  ? 'bg-rose-600 text-white shadow-md'
+                  : 'bg-[#081a1f] hover:bg-[#122f37] text-zinc-300 border border-[#14363f]'
+              }`}
+            >
+              <span>{sec.icon}</span>
+              <span>{sec.label}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Media Type & Genre Filter Strip */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-1.5 bg-[#081a1f] p-1 rounded-xl border border-[#14363f]">
@@ -667,7 +750,7 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
               <button
                 key={t}
                 onClick={() => setMediaTypeFilter(t)}
-                className={`px-3 py-1 rounded-lg text-xs font-mono font-bold capitalize transition ${
+                className={`px-3 py-1 rounded-lg text-xs font-mono font-bold capitalize transition cursor-pointer ${
                   mediaTypeFilter === t ? 'bg-rose-600 text-white' : 'text-zinc-400 hover:text-white'
                 }`}
               >
@@ -685,7 +768,7 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
                   setQuery('');
                   setActiveViewTab('trending');
                 }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
                   activeCategory === g.id
                     ? 'bg-rose-600 text-white shadow-md'
                     : 'bg-[#091b20] hover:bg-[#122f37] text-zinc-300 border border-[#183d47]'
@@ -824,6 +907,7 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
                 title={selectedItem.title || selectedItem.name}
                 allowFullScreen
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-downloads"
                 className="w-full h-full border-0"
               />
             </div>
@@ -913,15 +997,26 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
                 </button>
               </div>
 
-              {trailerUrl && (
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => window.open(trailerUrl, '_blank')}
-                  className="px-3.5 py-1.5 bg-rose-950 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs font-bold rounded-xl transition flex items-center gap-1.5"
+                  onClick={() => setShowDedicatedPlayer(true)}
+                  className="px-3.5 py-1.5 bg-[#082026] hover:bg-[#10343e] border border-[#16434e] text-teal-300 text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  title="Launch cinema video inside modern VaultVideoPlayer"
                 >
-                  <Play size={13} className="fill-current" />
-                  <span>Watch 4K Trailer</span>
+                  <Video size={13} className="text-teal-400" />
+                  <span>Dedicated Player</span>
                 </button>
-              )}
+
+                {trailerUrl && (
+                  <button
+                    onClick={() => setShowTrailerModal(true)}
+                    className="px-3.5 py-1.5 bg-rose-950 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <Play size={13} className="fill-current" />
+                    <span>Watch 4K Trailer</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* TAB 1: Real Season Episodes (with stills & titles) */}
@@ -1135,6 +1230,130 @@ export const MoviesMain: React.FC<MoviesMainProps> = ({ settings }) => {
           </div>
         )}
       </div>
+
+      {/* 1. DEDICATED VAULT VIDEO PLAYER OVERLAY */}
+      {showDedicatedPlayer && selectedItem && (
+        <VaultVideoPlayer
+          initialUrl={trailerUrl || activeStreamUrl}
+          initialTitle={selectedItem.title || selectedItem.name}
+          onClose={() => setShowDedicatedPlayer(false)}
+        />
+      )}
+
+      {/* 2. IN-APP 4K CINEMA TRAILER MODAL */}
+      {showTrailerModal && trailerUrl && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="relative w-full max-w-4xl bg-[#061619] border border-[#163a43] rounded-3xl overflow-hidden shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#14343d]">
+              <div className="flex items-center gap-2.5">
+                <Play size={16} className="text-rose-500 fill-current" />
+                <h3 className="font-bold text-sm text-white font-mono">
+                  Official 4K Trailer: {selectedItem?.title || selectedItem?.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowTrailerModal(false)}
+                className="p-1.5 rounded-xl bg-[#091f25] hover:bg-rose-950 hover:text-rose-400 text-zinc-400 transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="aspect-video w-full bg-black">
+              <iframe
+                src={trailerUrl}
+                title="Cinema Trailer"
+                allowFullScreen
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                className="w-full h-full border-0"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. TMDB API KEY CONFIGURATION & DIAGNOSTIC MODAL */}
+      {showTmdbModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="relative w-full max-w-md bg-[#07171a] border border-[#163a43] rounded-3xl p-6 shadow-2xl flex flex-col space-y-4">
+            <div className="flex items-center justify-between border-b border-[#14343d] pb-3">
+              <div className="flex items-center gap-2">
+                <Key size={18} className="text-rose-400" />
+                <h3 className="font-bold text-sm text-white font-mono">TMDB API Configuration</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowTmdbModal(false);
+                  setTmdbTestResult(null);
+                }}
+                className="p-1.5 rounded-xl bg-[#091f25] hover:bg-rose-950 hover:text-rose-400 text-zinc-400 transition cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#789d9a] leading-relaxed">
+              Power full metadata discovery, trending rankings, cast details, episode stills, and high-definition official cinema trailers.
+            </p>
+
+            <div className="space-y-2">
+              <label className="text-[11px] font-mono text-zinc-400 font-bold uppercase tracking-wider">
+                API Key (v3 auth)
+              </label>
+              <input
+                type="text"
+                value={customTmdbKey}
+                onChange={(e) => setCustomTmdbKey(e.target.value)}
+                placeholder="Enter 32-character TMDB API Key..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#030d0f] border border-[#14353d] text-white text-xs font-mono focus:outline-none focus:border-rose-500 transition"
+              />
+            </div>
+
+            {tmdbTestResult && (
+              <div
+                className={`p-3 rounded-xl text-xs font-mono border ${
+                  tmdbTestResult.includes('verified')
+                    ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
+                    : 'bg-rose-950/40 border-rose-800 text-rose-300'
+                }`}
+              >
+                {tmdbTestResult}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                disabled={isTestingKey || !customTmdbKey.trim()}
+                onClick={() => handleTestAndSaveTmdbKey(customTmdbKey.trim())}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold text-xs font-mono transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+              >
+                {isTestingKey ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={13} />
+                    <span>Save & Validate</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => {
+                  localStorage.removeItem('spotui_tmdb_key');
+                  setCustomTmdbKey('');
+                  setTmdbTestResult('Reset to built-in system key.');
+                  fetchMoviesData();
+                }}
+                className="px-3.5 py-2.5 rounded-xl bg-[#091f25] hover:bg-[#122e37] text-zinc-400 hover:text-white font-bold text-xs font-mono transition cursor-pointer"
+              >
+                Reset Default
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

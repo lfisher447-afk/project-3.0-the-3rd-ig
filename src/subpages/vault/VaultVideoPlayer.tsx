@@ -142,22 +142,25 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({
       activeBlobUrlRef.current = null;
     }
 
+    setVideoSrc(url);
+    if (title) setVideoTitle(title);
+    setIsBuffering(true);
+  }, []);
+
+  // Initialize HLS or Native HTML5 Video whenever videoSrc is set & video element is mounted
+  useEffect(() => {
+    if (!videoSrc || !videoRef.current) return;
+    const video = videoRef.current;
+
     if (hlsInstanceRef.current) {
       hlsInstanceRef.current.destroy();
       hlsInstanceRef.current = null;
     }
 
-    setVideoSrc(url);
-    if (title) setVideoTitle(title);
-    setIsBuffering(true);
-
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (url.includes('.m3u8')) {
+    if (videoSrc.includes('.m3u8')) {
       if (Hls.isSupported()) {
         const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-        hls.loadSource(url);
+        hls.loadSource(videoSrc);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsBuffering(false);
@@ -165,11 +168,11 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({
         });
         hlsInstanceRef.current = hls;
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url;
+        video.src = videoSrc;
         video.play().catch(() => {});
       }
     } else {
-      video.src = url;
+      video.src = videoSrc;
       video.load();
       video.play().then(() => {
         setIsPlaying(true);
@@ -179,7 +182,7 @@ export const VaultVideoPlayer: React.FC<VaultVideoPlayerProps> = ({
         setIsBuffering(false);
       });
     }
-  }, []);
+  }, [videoSrc]);
 
   // Handle Initial URL if provided
   useEffect(() => {
